@@ -8,6 +8,7 @@ modules (client, verdict_handler, hook_governance, etc.).
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 import uuid
@@ -33,6 +34,14 @@ from openbox_langchain.types import (
     safe_serialize,
 )
 from openbox_langchain.verdict_handler import enforce_verdict
+
+try:
+    from opentelemetry import context as otel_context
+    from opentelemetry import trace as otel_trace
+
+    _HAS_OTEL = True
+except ImportError:
+    _HAS_OTEL = False
 
 logger = logging.getLogger("openbox_langchain")
 
@@ -209,7 +218,81 @@ class OpenBoxGovernanceCallbackHandler(AsyncCallbackHandler):
         self._seen_tool_run_ids: set[str] = set()
         self._buffer = _RunBufferManager()
 
-    # ─── Pre-Screen (standalone method for reliable enforcement) ────
+    # ─── Shared verdict enforcement + HITL polling ──────────────────
+
+    async def _enforce_and_poll(
+        self,
+        response: GovernanceVerdictResponse,
+        context: str,
+        activity_id: str,
+        activity_type: str,
+    ) -> None:
+        """Enforce verdict and poll for HITL approval if required."""
+        result = enforce_verdict(response, context)
+        if result.requires_hitl:
+            await poll_until_decision(
+                self._client,
+                HITLPollParams(
+                    workflow_id=self._workflow_id or "",
+                    run_id=self._run_id or "",
+                    activity_id=activity_id,
+                    activity_type=activity_type,
+                ),
+                self._config.hitl,
+            )
+
+    # ─── Pre-Screen ───────────────────────────────────────────────
+
+    async def _do_pre_screen(self, input_data: dict[str, Any]) -> None:
+        """Shared pre-screen logic: SignalReceived + WorkflowStarted + LLMStarted."""
+        wf_uuid = uuid.uuid4().hex[:8]
+        self._workflow_id = f"lc-{wf_uuid}"
+        self._run_id = f"lc-{wf_uuid}-run-{uuid.uuid4().hex[:8]}"
+
+        user_prompt = _extract_user_prompt(input_data)
+
+        if user_prompt:
+            sig_event = self._build_event(
+                event_type="SignalReceived",
+                activity_id=f"{self._run_id}-sig",
+                activity_type="user_prompt",
+                signal_name="user_prompt",
+                signal_args=[user_prompt],
+            )
+            await self._client.evaluate_event(sig_event)
+
+        wf_event = self._build_event(
+            event_type="WorkflowStarted",
+            activity_id=f"{self._run_id}-wf",
+            activity_type=self._config.agent_name or "LangChainRun",
+            activity_input=[safe_serialize(input_data)],
+        )
+        await self._client.evaluate_event(wf_event)
+        self._workflow_started = True
+
+        if self._config.send_llm_start_event and user_prompt:
+            pre_id = f"{self._run_id}-pre"
+            pre_event = self._build_event(
+                event_type="LLMStarted",
+                activity_id=pre_id,
+                activity_type="llm_call",
+                activity_input=[{"prompt": user_prompt}],
+                prompt=user_prompt,
+            )
+            response = await self._client.evaluate_event(pre_event)
+            if response:
+                try:
+                    await self._enforce_and_poll(
+                        response, "llm_start", pre_id, "llm_call"
+                    )
+                except Exception as exc:
+                    if self._workflow_started:
+                        await self._send_workflow_completed(
+                            status="failed", error=str(exc)
+                        )
+                    raise
+                self._pre_screen_response = response
+                self._pre_screen_activity_id = pre_id
 
     async def pre_screen(self, input_data: dict[str, Any]) -> None:
         """Pre-screen user input BEFORE calling agent.invoke().
@@ -227,66 +310,7 @@ class OpenBoxGovernanceCallbackHandler(AsyncCallbackHandler):
             GovernanceHaltError: If policy halts the workflow.
             GuardrailsValidationError: If guardrails reject the input.
         """
-        # Generate workflow IDs
-        wf_uuid = uuid.uuid4().hex[:8]
-        self._workflow_id = f"lc-{wf_uuid}"
-        self._run_id = f"lc-{wf_uuid}-run-{uuid.uuid4().hex[:8]}"
-
-        user_prompt = _extract_user_prompt(input_data)
-
-        # SignalReceived
-        if user_prompt:
-            sig_event = self._build_event(
-                event_type="SignalReceived",
-                activity_id=f"{self._run_id}-sig",
-                activity_type="user_prompt",
-                signal_name="user_prompt",
-                signal_args=[user_prompt],
-            )
-            await self._client.evaluate_event(sig_event)
-
-        # WorkflowStarted
-        wf_event = self._build_event(
-            event_type="WorkflowStarted",
-            activity_id=f"{self._run_id}-wf",
-            activity_type=self._config.agent_name or "LangChainRun",
-            activity_input=[safe_serialize(input_data)],
-        )
-        await self._client.evaluate_event(wf_event)
-        self._workflow_started = True
-
-        # Pre-screen LLMStarted (guardrails on user prompt)
-        if self._config.send_llm_start_event and user_prompt:
-            pre_id = f"{self._run_id}-pre"
-            pre_event = self._build_event(
-                event_type="LLMStarted",
-                activity_id=pre_id,
-                activity_type="llm_call",
-                activity_input=[{"prompt": user_prompt}],
-                prompt=user_prompt,
-            )
-            response = await self._client.evaluate_event(pre_event)
-            if response:
-                try:
-                    result = enforce_verdict(response, "llm_start")
-                except Exception as exc:
-                    if self._workflow_started:
-                        await self._send_workflow_completed(
-                            status="failed", error=str(exc)
-                        )
-                    raise
-                if result.requires_hitl:
-                    await poll_until_decision(
-                        self._client,
-                        HITLPollParams(
-                            workflow_id=self._workflow_id,
-                            run_id=self._run_id,
-                            activity_id=pre_id,
-                        ),
-                        self._config.hitl,
-                    )
-                self._pre_screen_response = response
-                self._pre_screen_activity_id = pre_id
+        await self._do_pre_screen(input_data)
 
     # ─── Chain Callbacks ────────────────────────────────────────────
 
@@ -311,66 +335,7 @@ class OpenBoxGovernanceCallbackHandler(AsyncCallbackHandler):
 
             # If pre_screen() wasn't called, do inline pre-screen
             if not self._workflow_started:
-                wf_uuid = uuid.uuid4().hex[:8]
-                self._workflow_id = f"lc-{wf_uuid}"
-                self._run_id = f"lc-{wf_uuid}-run-{uuid.uuid4().hex[:8]}"
-
-                user_prompt = _extract_user_prompt(inputs)
-
-                # SignalReceived
-                if user_prompt:
-                    sig_event = self._build_event(
-                        event_type="SignalReceived",
-                        activity_id=f"{self._run_id}-sig",
-                        activity_type="user_prompt",
-                        signal_name="user_prompt",
-                        signal_args=[user_prompt],
-                    )
-                    await self._client.evaluate_event(sig_event)
-
-                # WorkflowStarted — always send for root (session must exist)
-                wf_event = self._build_event(
-                    event_type="WorkflowStarted",
-                    activity_id=f"{self._run_id}-wf",
-                    activity_type=self._config.agent_name or "LangChainRun",
-                    activity_input=[safe_serialize(inputs)],
-                )
-                await self._client.evaluate_event(wf_event)
-                self._workflow_started = True
-
-                # Pre-screen LLMStarted (best-effort in callback)
-                if self._config.send_llm_start_event and user_prompt:
-                    pre_id = f"{self._run_id}-pre"
-                    pre_event = self._build_event(
-                        event_type="LLMStarted",
-                        activity_id=pre_id,
-                        activity_type="llm_call",
-                        activity_input=[{"prompt": user_prompt}],
-                        prompt=user_prompt,
-                    )
-                    response = await self._client.evaluate_event(pre_event)
-                    if response:
-                        # Best-effort enforcement — may not propagate through AgentExecutor
-                        try:
-                            result = enforce_verdict(response, "llm_start")
-                        except Exception as exc:
-                            if self._workflow_started:
-                                await self._send_workflow_completed(
-                                    status="failed", error=str(exc)
-                                )
-                            raise
-                        if result.requires_hitl:
-                            await poll_until_decision(
-                                self._client,
-                                HITLPollParams(
-                                    workflow_id=self._workflow_id,
-                                    run_id=self._run_id,
-                                    activity_id=pre_id,
-                                ),
-                                self._config.hitl,
-                            )
-                        self._pre_screen_response = response
-                        self._pre_screen_activity_id = pre_id
+                await self._do_pre_screen(inputs)
             return
 
         # Nested chain (non-root)
@@ -482,7 +447,7 @@ class OpenBoxGovernanceCallbackHandler(AsyncCallbackHandler):
         self._create_otel_span_for_tool(str_run_id, tool_name)
 
         # Resolve tool_type from tool_type_map
-        tool_type = (self._config.tool_type_map or {}).get(tool_name)
+        tool_type = self._config.tool_type_map.get(tool_name)
         tool_input = _unwrap_tool_input(input_str)
 
         gov = self._build_event(
@@ -495,17 +460,9 @@ class OpenBoxGovernanceCallbackHandler(AsyncCallbackHandler):
         )
         response = await self._client.evaluate_event(gov)
         if response:
-            result = enforce_verdict(response, "tool_start")
-            if result.requires_hitl:
-                await poll_until_decision(
-                    self._client,
-                    HITLPollParams(
-                        workflow_id=self._workflow_id,
-                        run_id=self._run_id,
-                        activity_id=str_run_id,
-                    ),
-                    self._config.hitl,
-                )
+            await self._enforce_and_poll(
+                response, "tool_start", str_run_id, tool_name
+            )
 
     async def on_tool_end(
         self, output: str, *, run_id: UUID, **kwargs: Any
@@ -532,17 +489,9 @@ class OpenBoxGovernanceCallbackHandler(AsyncCallbackHandler):
         )
         response = await self._client.evaluate_event(gov)
         if response:
-            result = enforce_verdict(response, "tool_end")
-            if result.requires_hitl:
-                await poll_until_decision(
-                    self._client,
-                    HITLPollParams(
-                        workflow_id=self._workflow_id,
-                        run_id=self._run_id,
-                        activity_id=str_run_id,
-                    ),
-                    self._config.hitl,
-                )
+            await self._enforce_and_poll(
+                response, "tool_end", str_run_id, tool_name
+            )
 
     async def on_tool_error(
         self, error: BaseException, *, run_id: UUID, **kwargs: Any
@@ -652,20 +601,9 @@ class OpenBoxGovernanceCallbackHandler(AsyncCallbackHandler):
         )
         response = await self._client.evaluate_event(gov)
         if response:
-            result = enforce_verdict(response, "agent_action")
-            if result.requires_hitl:
-                await poll_until_decision(
-                    self._client,
-                    HITLPollParams(
-                        workflow_id=self._workflow_id,
-                        run_id=self._run_id,
-                        activity_id=f"{str_run_id}-action",
-                    ),
-                    self._config.hitl,
-                )
-
-    async def on_agent_finish(self, finish: Any, *, run_id: UUID, **kwargs: Any) -> None:
-        """Observation only — root on_chain_end handles WorkflowCompleted."""
+            await self._enforce_and_poll(
+                response, "agent_action", f"{str_run_id}-action", tool_name
+            )
 
     # ─── Event Builder ──────────────────────────────────────────────
 
@@ -706,12 +644,9 @@ class OpenBoxGovernanceCallbackHandler(AsyncCallbackHandler):
 
     def _create_otel_span_for_tool(self, str_run_id: str, tool_name: str) -> None:
         """Create OTel span for tool execution to bridge trace context to hooks."""
-        if self._span_processor is None:
+        if self._span_processor is None or not _HAS_OTEL:
             return
         try:
-            from opentelemetry import context as otel_context
-            from opentelemetry import trace as otel_trace
-
             tracer = otel_trace.get_tracer("openbox_langchain")
             parent_ctx = otel_context.get_current()
             tool_span = tracer.start_span(f"tool.{tool_name}", context=parent_ctx)
@@ -739,14 +674,12 @@ class OpenBoxGovernanceCallbackHandler(AsyncCallbackHandler):
             try:
                 buf.otel_span.end()
             except Exception:
-                pass
-        if buf.otel_token:
+                logger.debug("OTel span end failed for %s", str_run_id)
+        if buf.otel_token and _HAS_OTEL:
             try:
-                from opentelemetry import context as otel_context
-
                 otel_context.detach(buf.otel_token)
             except Exception:
-                pass
+                logger.debug("OTel context detach failed for %s", str_run_id)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -852,8 +785,6 @@ def _unwrap_tool_input(raw: Any) -> Any:
     """Unwrap potentially double-encoded JSON tool input."""
     if isinstance(raw, str):
         try:
-            import json
-
             return json.loads(raw)
         except (json.JSONDecodeError, TypeError):
             return raw
@@ -912,8 +843,7 @@ def create_openbox_langchain_handler(
         validate=validate,
     )
 
-    # Filter handler_kwargs to only known fields
-    known_fields = {f.name for f in OpenBoxLangChainHandlerOptions.__dataclass_fields__.values()}
+    known_fields = set(OpenBoxLangChainHandlerOptions.__dataclass_fields__)
     filtered_kwargs = {k: v for k, v in handler_kwargs.items() if k in known_fields}
 
     options = OpenBoxLangChainHandlerOptions(
