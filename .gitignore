@@ -17,3 +17,5 @@ htmlcov/
 .coverage
 *.so
 .DS_Store
+CLAUDE.md
+plans/

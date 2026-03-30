@@ -1,6 +1,6 @@
 # OpenBox LangChain SDK — Python
 
-Governance and observability SDK for LangChain agents. Provides real-time policy enforcement, guardrails, HITL approval flows, and hook-level governance via `AsyncCallbackHandler`.
+Governance and observability SDK for LangChain agents. Intercepts agent execution via `AgentMiddleware` to enforce OpenBox policies, guardrails, HITL approval flows, and hook-level governance (HTTP/DB/File I/O).
 
 ## Installation
 
@@ -11,77 +11,100 @@ pip install openbox-langchain-sdk-python
 ## Quick Start
 
 ```python
-from openbox_langchain import create_openbox_langchain_handler
+from langchain_openai import ChatOpenAI
+from langgraph.prebuilt import create_react_agent
+from openbox_langchain import create_openbox_langchain_middleware
 
-handler = create_openbox_langchain_handler(
+# 1. Create middleware
+middleware = create_openbox_langchain_middleware(
     api_url="https://core.openbox.ai",
     api_key="obx_live_...",
     agent_name="MyAgent",
-    tool_type_map={"search_web": "http", "query_db": "database"},
 )
 
-# Attach to any LangChain agent
-result = agent.invoke(
-    {"input": "Hello"},
-    config={"callbacks": [handler]},
+# 2. Create agent with middleware
+model = ChatOpenAI(model="gpt-4")
+tools = [...]  # Your tools
+
+agent = create_react_agent(
+    model=model,
+    tools=tools,
+    middleware=[middleware],
 )
+
+# 3. Invoke agent — governance applied automatically
+result = agent.invoke({
+    "messages": [("user", "your query")]
+})
 ```
 
-## Pre-Screen (Recommended)
+## How It Works
 
-For reliable blocking before the agent starts, use `pre_screen()`:
+Three-layer governance architecture:
 
-```python
-handler = create_openbox_langchain_handler(api_url="...", api_key="...")
+| Layer | Mechanism | Governs |
+|-------|-----------|---------|
+| 1 | AgentMiddleware hooks | Agent lifecycle (before/after), model calls, tool execution |
+| 2 | Hook Governance | HTTP requests, DB queries, file I/O at kernel boundary |
+| 3 | Activity Context Mapping | Links hook traces to governance activities via OTel |
 
-# Pre-screen raises GovernanceBlockedError/GovernanceHaltError if blocked
-await handler.pre_screen({"input": "user message"})
-
-# If pre-screen passes, run the agent
-result = agent.invoke({"input": "user message"}, config={"callbacks": [handler]})
-```
-
-## Architecture
-
-Three-layer governance (same as LangGraph SDK):
-
-| Layer | Mechanism | What It Governs |
-|-------|-----------|-----------------|
-| 1 | AsyncCallbackHandler | Chain/Tool/LLM lifecycle events |
-| 2 | Hook Governance | HTTP requests, DB queries, file I/O |
-| 3 | Activity Context Mapping | Links hook traces to governance activities |
+**Middleware hooks:**
+- `before_agent` / `abefore_agent` — Session setup, pre-screen guardrails
+- `wrap_model_call` / `awrap_model_call` — LLM interception, PII redaction
+- `wrap_tool_call` / `awrap_tool_call` — Tool governance, OTel span registration
+- `after_agent` / `aafter_agent` — Session cleanup
 
 ## Configuration
 
 ```python
-handler = create_openbox_langchain_handler(
-    api_url="https://core.openbox.ai",
-    api_key="obx_live_...",
-    agent_name="MyAgent",
-    governance_timeout=30.0,           # API timeout in seconds
-    validate=True,                     # Validate API key on startup
-    tool_type_map={                    # Classify tools for execution tree
+middleware = create_openbox_langchain_middleware(
+    api_url="https://core.openbox.ai",  # OpenBox Core URL
+    api_key="obx_live_...",              # API key (obx_live_* or obx_test_*)
+    agent_name="MyAgent",                # Agent name (from dashboard)
+    governance_timeout=30.0,             # HTTP timeout in seconds
+    validate=True,                       # Validate API key on startup
+    session_id="session-123",            # Optional session tracking
+    sqlalchemy_engine=engine,            # Optional DB governance
+    tool_type_map={                      # Optional tool classification
         "search_web": "http",
         "query_db": "database",
-        "write_file": "builtin",
     },
-    hitl={"enabled": True, "poll_interval_ms": 5000},
-    session_id="session-123",          # Optional session tracking
-    sqlalchemy_engine=engine,          # Optional DB governance
 )
 ```
 
 ## Supported Agent Types
 
-- `create_tool_calling_agent` + `AgentExecutor` (primary)
-- `create_react_agent` + `AgentExecutor`
-- `create_structured_chat_agent`
-- Raw `RunnableSequence` / LCEL chains
+- `create_react_agent(model, tools, middleware=[...])`
+- `create_tool_calling_agent(model, tools, middleware=[...])`
+- Any `LangGraph` agent (v0.2.0+)
+
+## Verdict Enforcement
+
+5-tier verdict system:
+- **ALLOW** — Request permitted
+- **CONSTRAIN** — Request constrained (e.g., rate limit)
+- **REQUIRE_APPROVAL** — Human approval required (HITL polling)
+- **BLOCK** — Request blocked with error
+- **HALT** — Entire workflow halted (unrecoverable error)
 
 ## Requirements
 
 - Python 3.11+
-- `langchain-core >= 0.3.0`
+- LangChain >= 0.3.0
+- LangGraph >= 0.2.0
+- openbox-langgraph-sdk-python >= 0.1.0
+
+## API Reference
+
+**Primary factory:**
+- `create_openbox_langchain_middleware()` — Creates configured middleware
+
+**Re-exported from langgraph SDK:**
+- `enforce_verdict()` — Enforce verdicts
+- `poll_until_decision()` — HITL approval polling
+- `GovernanceClient`, `GovernanceConfig` — Core types
+
+See `openbox_langchain.__init__.py` for full API export list.
 
 ## License
 
