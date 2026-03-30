@@ -11,8 +11,7 @@ pip install openbox-langchain-sdk-python
 ## Quick Start
 
 ```python
-from langchain_openai import ChatOpenAI
-from langgraph.prebuilt import create_react_agent
+from langchain.agents import create_agent
 from openbox_langchain import create_openbox_langchain_middleware
 
 # 1. Create middleware
@@ -23,19 +22,14 @@ middleware = create_openbox_langchain_middleware(
 )
 
 # 2. Create agent with middleware
-model = ChatOpenAI(model="gpt-4")
-tools = [...]  # Your tools
-
-agent = create_react_agent(
-    model=model,
-    tools=tools,
+agent = create_agent(
+    model="openai:gpt-4o",
+    tools=[...],
     middleware=[middleware],
 )
 
-# 3. Invoke agent — governance applied automatically
-result = agent.invoke({
-    "messages": [("user", "your query")]
-})
+# 3. Invoke — governance applied automatically
+result = agent.invoke({"messages": [("user", "your query")]})
 ```
 
 ## How It Works
@@ -74,9 +68,8 @@ middleware = create_openbox_langchain_middleware(
 
 ## Supported Agent Types
 
-- `create_react_agent(model, tools, middleware=[...])`
-- `create_tool_calling_agent(model, tools, middleware=[...])`
-- Any `LangGraph` agent (v0.2.0+)
+- `create_agent(model, tools, middleware=[...])` — recommended
+- Any LangChain agent builder that accepts `middleware`
 
 ## Verdict Enforcement
 
