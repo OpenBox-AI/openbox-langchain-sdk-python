@@ -16,8 +16,5 @@ dependencies = [
     "tavily-python>=0.5.0",
 ]
 
-[tool.uv.sources]
-openbox-langchain-sdk-python = { path = "../../", editable = true }
-
 [dependency-groups]
 dev = []
