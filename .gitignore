@@ -19,3 +19,5 @@ htmlcov/
 .DS_Store
 CLAUDE.md
 plans/
+
+.vscode/
