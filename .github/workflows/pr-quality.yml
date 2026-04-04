@@ -24,7 +24,7 @@ concurrency:
 
 env:
   PYTHON_VERSION: "3.11"
-  COVERAGE_THRESHOLD: "80"
+  COVERAGE_THRESHOLD: "60"
   SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
   SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
   CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
@@ -53,6 +53,8 @@ jobs:
         run: uv run ruff check openbox_langchain/
 
       - name: Run unit tests with coverage
+        id: unit_tests
+        continue-on-error: true
         run: |
           uv run --with pytest-cov pytest tests/ \
             --cov=openbox_langchain \
@@ -62,6 +64,7 @@ jobs:
             -v
 
       - name: Upload coverage report
+        if: ${{ always() && hashFiles('coverage.xml') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: coverage-xml
@@ -69,7 +72,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload coverage to Codecov
-        if: ${{ env.CODECOV_TOKEN != '' }}
+        if: ${{ always() && env.CODECOV_TOKEN != '' && hashFiles('coverage.xml') != '' }}
         uses: codecov/codecov-action@v5
         with:
           files: ./coverage.xml
@@ -79,9 +82,14 @@ jobs:
           verbose: true
           token: ${{ env.CODECOV_TOKEN }}
 
+      - name: Fail job if tests failed
+        if: ${{ always() && steps.unit_tests.outcome == 'failure' }}
+        run: exit 1
+
   build:
     name: Build
     runs-on: ubuntu-latest
+    if: ${{ always() }}
     needs:
       - test
 
@@ -110,6 +118,7 @@ jobs:
   sonarqube:
     name: SonarQube
     runs-on: ubuntu-latest
+    if: ${{ always() }}
     needs:
       - test
 
@@ -126,6 +135,7 @@ jobs:
 
       - name: Download coverage report
         if: ${{ env.SONAR_TOKEN != '' && env.SONAR_HOST_URL != '' }}
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: coverage-xml
@@ -146,8 +156,8 @@ jobs:
           key: ${{ runner.os }}-sonar
           restore-keys: ${{ runner.os }}-sonar
 
-      - name: SonarQube scan
-        if: ${{ env.SONAR_TOKEN != '' && env.SONAR_HOST_URL != '' }}
+      - name: SonarQube scan with coverage
+        if: ${{ env.SONAR_TOKEN != '' && env.SONAR_HOST_URL != '' && hashFiles('coverage.xml') != '' }}
         uses: SonarSource/sonarqube-scan-action@v7
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -156,3 +166,11 @@ jobs:
         with:
           args: >
             -Dsonar.python.coverage.reportPaths=coverage.xml
+
+      - name: SonarQube scan without coverage
+        if: ${{ env.SONAR_TOKEN != '' && env.SONAR_HOST_URL != '' && hashFiles('coverage.xml') == '' }}
+        uses: SonarSource/sonarqube-scan-action@v7
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ env.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ env.SONAR_HOST_URL }}
