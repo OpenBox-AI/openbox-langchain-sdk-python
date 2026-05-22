@@ -59,6 +59,67 @@ def test_factory_calls_initialize():
                     assert call_kwargs["governance_timeout"] == 45.0
 
 
+def test_factory_forwards_agent_identity_to_initialize():
+    """Factory forwards DID signing config to the shared LangGraph initializer."""
+    with patch("openbox_langgraph.config.initialize") as mock_init:
+        with patch("openbox_langchain.middleware.get_global_config") as mock_gc:
+            mock_gc.return_value = MagicMock(
+                api_url="https://test.openbox.ai",
+                api_key="obx_test_123",
+                governance_timeout=30.0,
+            )
+            with patch("openbox_langchain.middleware.GovernanceClient"):
+                with patch("openbox_langchain.middleware.merge_config") as mock_mc:
+                    mock_mc.return_value = MagicMock()
+
+                    create_openbox_langchain_middleware(
+                        api_url="https://test.openbox.ai",
+                        api_key="obx_test_123",
+                        agent_did="did:aip:550e8400-e29b-41d4-a716-446655440000",
+                        agent_private_key="key",
+                    )
+
+                    call_kwargs = mock_init.call_args[1]
+                    assert (
+                        call_kwargs["agent_did"]
+                        == "did:aip:550e8400-e29b-41d4-a716-446655440000"
+                    )
+                    assert call_kwargs["agent_private_key"] == "key"
+
+
+def test_middleware_passes_agent_identity_to_client_and_hooks():
+    """Middleware forwards resolved global DID config to governance client and OTel hooks."""
+    with patch("openbox_langchain.middleware.get_global_config") as mock_gc:
+        mock_gc.return_value = MagicMock(
+            api_url="https://test.openbox.ai",
+            api_key="obx_test_123",
+            governance_timeout=30.0,
+            agent_did="did:aip:550e8400-e29b-41d4-a716-446655440000",
+            agent_private_key="key",
+        )
+        with patch("openbox_langchain.middleware.GovernanceClient") as mock_client:
+            with patch("openbox_langchain.middleware.merge_config") as mock_mc:
+                mock_mc.return_value = MagicMock(on_api_error="fail_open")
+                with patch(
+                    "openbox_langgraph.otel_setup.setup_opentelemetry_for_governance"
+                ) as mock_setup:
+                    OpenBoxLangChainMiddleware()
+
+                    client_kwargs = mock_client.call_args.kwargs
+                    assert (
+                        client_kwargs["agent_did"]
+                        == "did:aip:550e8400-e29b-41d4-a716-446655440000"
+                    )
+                    assert client_kwargs["agent_private_key"] == "key"
+
+                    setup_kwargs = mock_setup.call_args.kwargs
+                    assert (
+                        setup_kwargs["agent_did"]
+                        == "did:aip:550e8400-e29b-41d4-a716-446655440000"
+                    )
+                    assert setup_kwargs["agent_private_key"] == "key"
+
+
 def test_factory_sets_agent_name():
     """Factory sets agent_name in options."""
     with patch("openbox_langgraph.config.initialize"):

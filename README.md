@@ -18,6 +18,8 @@ from openbox_langchain import create_openbox_langchain_middleware
 middleware = create_openbox_langchain_middleware(
     api_url="https://core.openbox.ai",
     api_key="obx_live_...",
+    agent_did="did:aip:...",
+    agent_private_key="...",
     agent_name="MyAgent",
 )
 
@@ -54,6 +56,8 @@ Three-layer governance architecture:
 middleware = create_openbox_langchain_middleware(
     api_url="https://core.openbox.ai",  # OpenBox Core URL
     api_key="obx_live_...",              # API key (obx_live_* or obx_test_*)
+    agent_did="did:aip:...",             # Optional; defaults to OPENBOX_AGENT_DID
+    agent_private_key="...",             # Optional; defaults to OPENBOX_AGENT_PRIVATE_KEY
     agent_name="MyAgent",                # Agent name (from dashboard)
     governance_timeout=30.0,             # HTTP timeout in seconds
     validate=True,                       # Validate API key on startup
@@ -85,7 +89,7 @@ middleware = create_openbox_langchain_middleware(
 - Python 3.11+
 - LangChain >= 0.3.0
 - LangGraph >= 0.2.0
-- openbox-langgraph-sdk-python >= 0.1.0
+- openbox-langgraph-sdk-python >= 0.2.0
 
 ## API Reference
 
