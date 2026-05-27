@@ -188,7 +188,7 @@ Week 3: Polish & Release (Next)
 
 ### Required
 - Python 3.11+
-- openbox-langgraph-sdk-python >= 0.1.0
+- openbox-langgraph-sdk-python >= 0.2.0
 - langchain >= 0.3.0
 - langchain-core >= 0.3.0
 - langgraph >= 0.2.0
