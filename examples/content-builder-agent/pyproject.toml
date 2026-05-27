@@ -9,7 +9,7 @@ dependencies = [
     "langchain-openai>=0.3.0",
     "langgraph>=0.2.0",
     "google-genai>=1.0.0",
-    "openbox-langchain-sdk-python",
+    "openbox-langchain-sdk-python>=0.2.0",
     "langsmith>=0.8.0",
     "pillow>=12.2.0",
     "python-dotenv>=1.0.0",

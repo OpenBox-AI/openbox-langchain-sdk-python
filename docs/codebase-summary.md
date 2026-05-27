@@ -70,7 +70,7 @@ examples/
 └── content-builder-agent/          # Full working example agent with middleware
 ```
 
-**Test Status:** 99 tests, 100% pass rate.
+**Test Status:** 116 tests, 100% pass rate, 89% package coverage.
 
 ## Module Dependencies
 
