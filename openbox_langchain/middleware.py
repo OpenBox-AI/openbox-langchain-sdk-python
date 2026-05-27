@@ -89,6 +89,8 @@ class OpenBoxLangChainMiddleware(AgentMiddleware):
             api_key=gc.api_key,
             timeout=gc.governance_timeout,
             on_api_error=self._config.on_api_error,
+            agent_did=gc.agent_did,
+            agent_private_key=gc.agent_private_key,
         )
 
         # OTel span processor for hook-level governance (Layer 2/3)
@@ -107,6 +109,8 @@ class OpenBoxLangChainMiddleware(AgentMiddleware):
                     api_timeout=gc.governance_timeout,
                     on_api_error=self._config.on_api_error,
                     sqlalchemy_engine=opts.sqlalchemy_engine,
+                    agent_did=gc.agent_did,
+                    agent_private_key=gc.agent_private_key,
                 )
                 logging.getLogger("opentelemetry.context").setLevel(logging.CRITICAL)
             except Exception:
