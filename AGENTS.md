@@ -87,7 +87,7 @@ mypy openbox_langchain/
 
 ## Testing
 
-**Current:** 99 tests, 100% pass rate
+**Current:** 116 tests, 100% pass rate, 89% package coverage
 
 **Coverage:**
 - Unit tests for each hook handler

@@ -56,8 +56,8 @@ Three-layer governance architecture:
 middleware = create_openbox_langchain_middleware(
     api_url="https://core.openbox.ai",  # OpenBox Core URL
     api_key="obx_live_...",              # API key (obx_live_* or obx_test_*)
-    agent_did="did:aip:...",             # Optional; defaults to OPENBOX_AGENT_DID
-    agent_private_key="...",             # Optional; defaults to OPENBOX_AGENT_PRIVATE_KEY
+    agent_did="did:aip:...",             # Required by default; can use OPENBOX_AGENT_DID
+    agent_private_key="...",             # Required by default; can use OPENBOX_AGENT_PRIVATE_KEY
     agent_name="MyAgent",                # Agent name (from dashboard)
     governance_timeout=30.0,             # HTTP timeout in seconds
     validate=True,                       # Validate API key on startup
@@ -69,6 +69,34 @@ middleware = create_openbox_langchain_middleware(
     },
 )
 ```
+
+## Agent Identity and DID Signing
+
+OpenBox issues each registered agent a decentralized identifier (DID) and
+private key. DID signing is enabled by default for newly registered agents. The
+OpenBox UI returns both values when the agent is created. Pass them to the
+middleware so governance events are signed and attributable to that agent.
+
+You can provide them directly:
+
+```python
+middleware = create_openbox_langchain_middleware(
+    api_url="https://core.openbox.ai",
+    api_key="obx_live_...",
+    agent_did="did:aip:...",
+    agent_private_key="...",
+)
+```
+
+Or set them through the environment:
+
+```bash
+export OPENBOX_AGENT_DID="did:aip:..."
+export OPENBOX_AGENT_PRIVATE_KEY="..."
+```
+
+If DID signing is explicitly disabled for the agent in OpenBox, these values can
+be omitted. Otherwise, provide both values together.
 
 ## Supported Agent Types
 

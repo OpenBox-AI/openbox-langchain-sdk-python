@@ -4,7 +4,7 @@
 
 OpenBox governance SDK for LangChain agents. Provides real-time policy enforcement, guardrails, Human-in-the-Loop (HITL) approval flows, and hook-level governance (HTTP/DB/File I/O) via `AgentMiddleware` integration pattern.
 
-**Status:** v0.1.0 (production-ready middleware baseline)
+**Status:** v0.2.0 (production-ready middleware with DID signing support)
 **Architecture:** Middleware-based (AgentMiddleware subclass, not callbacks)
 **Language:** Python 3.11+
 
@@ -125,7 +125,7 @@ Enable developers to:
 ### NFR6: Maintainability
 - **Code reuse:** Import governance infrastructure from langgraph SDK (no copying)
 - **Module count:** 5 new modules (middleware, factory, hooks, handlers, tool_hook)
-- **Test coverage:** 99 tests, 100% pass rate
+- **Test coverage:** 116 tests, 100% pass rate
 - **Documentation:** This file, system-architecture, codebase-summary, code-standards
 - **Status:** ON TRACK
 
@@ -151,7 +151,7 @@ Middleware-based (3 layers):
 
 | Metric | Target | Current |
 |--------|--------|---------|
-| Test coverage | 100% | 100% (99 tests) |
+| Test coverage | 80%+ release gate | 89% (116 tests) |
 | Governance latency | < 2s | On track |
 | API key validation | On startup | Complete |
 | Async/sync support | Both | Complete |
@@ -179,18 +179,19 @@ Middleware-based (3 layers):
 - Event building & PII redaction
 - Tests & examples
 
-**Phase 2: Documentation (IN PROGRESS)**
+**Phase 2: Documentation (COMPLETE)**
 - README update (middleware API)
 - Architecture documentation
 - Code standards & patterns
 - Codebase summary
 - Project roadmap
 
-**Phase 3: Polish (PENDING)**
+**Phase 3: v0.2.0 Release (COMPLETE)**
 - Performance optimization
 - Additional examples
 - Community feedback integration
-- Release v0.1.0 stable
+- DID signing configuration
+- Release v0.2.0 stable
 
 ## Risks & Mitigation
 
