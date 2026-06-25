@@ -228,8 +228,8 @@ requires-dist = [
     { name = "langchain-core", specifier = ">=1.3.3" },
     { name = "langchain-openai", specifier = ">=0.3.0" },
     { name = "langgraph", specifier = ">=0.2.0" },
-    { name = "langsmith", specifier = ">=0.8.0" },
-    { name = "openbox-langchain-sdk-python" },
+    { name = "langsmith", specifier = ">=0.8.18" },
+    { name = "openbox-langchain-sdk-python", specifier = ">=0.2.0" },
     { name = "pillow", specifier = ">=12.2.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "pyyaml", specifier = ">=6.0.0" },
@@ -630,7 +630,7 @@ wheels = [
 
 [[package]]
 name = "langsmith"
-version = "0.8.5"
+version = "0.8.18"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -640,12 +640,13 @@ dependencies = [
     { name = "requests" },
     { name = "requests-toolbelt" },
     { name = "uuid-utils" },
+    { name = "websockets" },
     { name = "xxhash" },
     { name = "zstandard" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/17/eb/8883d1158c743d0aac350f09df7880714d27283497e8c80bb9fe3480f165/langsmith-0.8.5.tar.gz", hash = "sha256:3615243d99c12f4047f13042bdc05a373dce232d106a6511b3ca7b48c5af1c2c", size = 4462348, upload-time = "2026-05-15T21:31:41.093Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9a/d9/a6681aa9847bbbc5ec21abe20a5e233b94e5edcfe39624db607ac7e8ccb4/langsmith-0.8.18.tar.gz", hash = "sha256:32dde9c0e67e053e0fb738921fc8ced768af7b8fa83d7a0e3fd63597cf8776dd", size = 4526988, upload-time = "2026-06-19T13:12:17.123Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/23/85/968c88a63e32a59b3e5c68afd2fe114ce0708a125db0be1a85efc25fb2ea/langsmith-0.8.5-py3-none-any.whl", hash = "sha256:efc779f9d450dcaf9d97bc8894f4926276509d6e730e05289af9a64debce06ae", size = 399564, upload-time = "2026-05-15T21:31:39.046Z" },
+    { url = "https://files.pythonhosted.org/packages/03/70/0e0cc80a3b064c8d6c8d697c3125ed86e39d5a7393ec6dc8b07cb1cf13c4/langsmith-0.8.18-py3-none-any.whl", hash = "sha256:3940183349993faef48e6c7d08e4822ee9cefd906b362d0e3c2d650314d2f282", size = 508108, upload-time = "2026-06-19T13:12:15.348Z" },
 ]
 
 [[package]]
@@ -690,24 +691,27 @@ wheels = [
 
 [[package]]
 name = "openbox-langchain-sdk-python"
-version = "0.1.0"
+version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "langchain" },
     { name = "langchain-core" },
     { name = "langgraph" },
+    { name = "langsmith" },
     { name = "openbox-langgraph-sdk-python" },
+    { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/06/68/ca38560dad1929b4cc6378a5c0dfa297ccbd4636f2e583a5244aa4beb5b1/openbox_langchain_sdk_python-0.1.0.tar.gz", hash = "sha256:ae12ca7b778bf26e233417cc197e21c72488144aeaa7e0c948ab540ce9062cee", size = 165063, upload-time = "2026-03-30T16:47:34.373Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ba/89/9faf7f628aab616f757872740b9e157bb922b2891dd2532b2e3d35c2687b/openbox_langchain_sdk_python-0.2.0.tar.gz", hash = "sha256:bcafd971a8b310a312409d232434eea9a0215a27da2c192abc40a042938e251d", size = 290298, upload-time = "2026-05-28T16:18:55.175Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/59/7e/578e7a950c31b916c167d73a834d5c1a1a8036864545d4ad409f675c4d1d/openbox_langchain_sdk_python-0.1.0-py3-none-any.whl", hash = "sha256:9b4e9c495f1637efb21b81dd691e1c96d37911741d12dbcf4f12327c82935dce", size = 14084, upload-time = "2026-03-30T16:47:32.873Z" },
+    { url = "https://files.pythonhosted.org/packages/32/2e/47f3bce89b941e8a23f188bacbbe753999b111d66ee5488fda09e9e513b2/openbox_langchain_sdk_python-0.2.0-py3-none-any.whl", hash = "sha256:fe6d056646a35abd7af12b88b4acdeebbc625e87fedbe197e3a13e146939452b", size = 14615, upload-time = "2026-05-28T16:18:53.831Z" },
 ]
 
 [[package]]
 name = "openbox-langgraph-sdk-python"
-version = "0.1.0"
+version = "0.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "cryptography" },
     { name = "httpx" },
     { name = "langchain-core" },
     { name = "langgraph" },
@@ -726,9 +730,9 @@ dependencies = [
     { name = "opentelemetry-instrumentation-urllib3" },
     { name = "opentelemetry-sdk" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/52/4c/496c1fedc450c64b19cd438df26c56fdd4c6b9c4a19626c42a7a45464ec1/openbox_langgraph_sdk_python-0.1.0.tar.gz", hash = "sha256:8a40dd83e70c14fcd756a478fcf004c4317064619ae36ed626483967c28d103c", size = 255262, upload-time = "2026-03-23T05:25:28.266Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ba/46/bff6ad4ad5a29c929d72d2f613ebe707519710824a9710647b13e4bb4084/openbox_langgraph_sdk_python-0.2.0.tar.gz", hash = "sha256:62264f47e5b75ebd84ab7c21fcd52be19ed4ea1ffcaa5783db676b382c7cb3ae", size = 273577, upload-time = "2026-05-27T15:04:53.379Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/56/4d/78db7fc66cd5adf7c01a71baf1c14d7bbcf9e71dafd1262798d5e8c57032/openbox_langgraph_sdk_python-0.1.0-py3-none-any.whl", hash = "sha256:19d87ef0e8052ae20888d2a1bc61f333ee3290e66c7089d7897672baec35e78b", size = 68563, upload-time = "2026-03-23T05:25:26.801Z" },
+    { url = "https://files.pythonhosted.org/packages/71/92/8f153b2a1ec3b93810d7707c19866fab57ed04ca76b96d686c2022245fc3/openbox_langgraph_sdk_python-0.2.0-py3-none-any.whl", hash = "sha256:920a60037ae1ce91f665ae10dd08d12901f7e22f5fbd8cee92c0039c9eb1f960", size = 74117, upload-time = "2026-05-27T15:04:51.75Z" },
 ]
 
 [[package]]
