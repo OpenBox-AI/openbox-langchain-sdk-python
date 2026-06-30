@@ -175,6 +175,7 @@ jobs:
             --ignore-unfixed \
             --severity HIGH,CRITICAL \
             --include-dev-deps \
+            --ignorefile .trivyignore \
             --format table \
             --exit-code 1 | tee -a $GITHUB_STEP_SUMMARY || EXIT_CODE=$?
             
@@ -195,7 +196,7 @@ jobs:
             --ignore-unfixed \
             --severity HIGH,CRITICAL \
             --include-dev-deps \
-            --ignorefile .trivyignore \            
+            --ignorefile .trivyignore \
             --format sarif \
             --output trivy-release-results.sarif \
             --exit-code 1
