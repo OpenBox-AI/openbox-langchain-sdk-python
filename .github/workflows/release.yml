@@ -176,6 +176,7 @@ jobs:
             --severity HIGH,CRITICAL \
             --include-dev-deps \
             --ignorefile .trivyignore \
+            --skip-dirs tests,docs,examples,test-agent \
             --format table \
             --exit-code 1 | tee -a $GITHUB_STEP_SUMMARY || EXIT_CODE=$?
             
@@ -197,6 +198,7 @@ jobs:
             --severity HIGH,CRITICAL \
             --include-dev-deps \
             --ignorefile .trivyignore \
+            --skip-dirs tests,docs,examples,test-agent \
             --format sarif \
             --output trivy-release-results.sarif \
             --exit-code 1

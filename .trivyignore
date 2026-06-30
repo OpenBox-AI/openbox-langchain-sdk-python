@@ -1,6 +1,3 @@
-# Ignore specific paths
-tests/
-docs/
-*.test.py
-examples/
-test-agent/
+# Ignore specific CVE IDs
+# Add entries in format: CVE-YYYY-NNNNN or GHSA-xxxx-yyyy-zzzz
+# Note: directory exclusions are handled via --skip-dirs in the workflow
