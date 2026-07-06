@@ -14,11 +14,12 @@ from typing import Any
 from uuid import UUID
 
 from openbox_langchain.core_callback_llm_logic import (
+    LLM_ACTIVITY_TYPE,
     apply_llm_redaction,
     build_llm_started_envelope,
-    register_llm_trace,
+    finish_llm_trace,
     send_llm_completed,
-    unregister_llm_trace,
+    start_llm_trace,
 )
 from openbox_langchain.core_callback_options import OpenBoxLangChainCoreCallbackOptions
 
@@ -88,7 +89,10 @@ class AsyncLLMLifecycleMixin:
             options.bridge.stash_start_result(options.workflow_id, activity_id, result)
 
         apply_llm_redaction(result, messages)
-        register_llm_trace(options, activity_id, llm_type)
+        if event_run_id not in options.llm_trace_handles:
+            options.llm_trace_handles[event_run_id] = start_llm_trace(
+                options, activity_id, llm_type
+            )
 
     async def on_llm_end(
         self,
@@ -125,9 +129,16 @@ class AsyncLLMLifecycleMixin:
             activity_id = event_run_id
         else:
             activity_id = record.activity_id
+        trace_handle = options.llm_trace_handles.pop(event_run_id, None)
         if options.bridge.is_callback_owned(options.workflow_id, activity_id, "llm_complete"):
+            finish_llm_trace(options, trace_handle)
             return
         if not options.send_llm_end_event:
+            finish_llm_trace(options, trace_handle)
             return
-        await send_llm_completed(options, activity_id, "llm", result=response, error=error)
-        unregister_llm_trace(options)
+        try:
+            await send_llm_completed(
+                options, activity_id, LLM_ACTIVITY_TYPE, result=response, error=error
+            )
+        finally:
+            finish_llm_trace(options, trace_handle)

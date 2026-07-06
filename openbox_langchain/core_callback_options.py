@@ -9,7 +9,7 @@ without a shared base class import cycle.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from openbox_core.context import register_trace as default_register_trace
@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from openbox_core.runtime import OpenBoxRuntime
 
     from openbox_langchain.activity_bridge import ActivityBridge
+    from openbox_langchain.core_callback_llm_logic import LLMTraceHandle
 
 __all__ = ["OpenBoxLangChainCoreCallbackOptions"]
 
@@ -81,3 +82,4 @@ class OpenBoxLangChainCoreCallbackOptions:
     register_trace: Callable[[int | str, ActivityContext], None] = default_register_trace
     unregister_trace: Callable[[int | str], None] = default_unregister_trace
     record_less_ok: bool = True
+    llm_trace_handles: dict[str, LLMTraceHandle] = field(default_factory=dict)

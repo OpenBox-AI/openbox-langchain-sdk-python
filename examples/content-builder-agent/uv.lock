@@ -224,7 +224,7 @@ requires-dist = [
     { name = "langchain", specifier = ">=0.3.0" },
     { name = "langchain-openai", specifier = ">=0.3.0" },
     { name = "langgraph", specifier = ">=0.2.0" },
-    { name = "openbox-langchain-sdk-python", editable = "../../" },
+    { name = "openbox-langchain-sdk-python" },
     { name = "pillow", specifier = ">=10.0.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "pyyaml", specifier = ">=6.0.0" },
@@ -672,26 +672,17 @@ wheels = [
 [[package]]
 name = "openbox-langchain-sdk-python"
 version = "0.1.0"
-source = { editable = "../../" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "langchain" },
     { name = "langchain-core" },
     { name = "langgraph" },
     { name = "openbox-langgraph-sdk-python" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "langchain", specifier = ">=0.3.0" },
-    { name = "langchain-core", specifier = ">=0.3.0" },
-    { name = "langgraph", specifier = ">=0.2.0" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10.0" },
-    { name = "openbox-langgraph-sdk-python", specifier = ">=0.1.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.0" },
+sdist = { url = "https://files.pythonhosted.org/packages/06/68/ca38560dad1929b4cc6378a5c0dfa297ccbd4636f2e583a5244aa4beb5b1/openbox_langchain_sdk_python-0.1.0.tar.gz", hash = "sha256:ae12ca7b778bf26e233417cc197e21c72488144aeaa7e0c948ab540ce9062cee", size = 165063, upload-time = "2026-03-30T16:47:34.373Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/59/7e/578e7a950c31b916c167d73a834d5c1a1a8036864545d4ad409f675c4d1d/openbox_langchain_sdk_python-0.1.0-py3-none-any.whl", hash = "sha256:9b4e9c495f1637efb21b81dd691e1c96d37911741d12dbcf4f12327c82935dce", size = 14084, upload-time = "2026-03-30T16:47:32.873Z" },
 ]
-provides-extras = ["dev"]
 
 [[package]]
 name = "openbox-langgraph-sdk-python"

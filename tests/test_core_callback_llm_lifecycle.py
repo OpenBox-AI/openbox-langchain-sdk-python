@@ -197,10 +197,37 @@ def test_trace_register_unregister_use_injected_callables() -> None:
     options = make_options(register_trace=custom_register, unregister_trace=custom_unregister)
     assert options.register_trace is custom_register
     assert options.unregister_trace is custom_unregister
-    # Directly exercise the injected callables the way register_llm_trace would.
+    # Directly exercise the injected callables the way the trace handle does.
     options.register_trace(123, None)
     options.unregister_trace(123)
     assert calls == ["register", "unregister"]
+
+
+async def test_llm_callback_creates_and_cleans_trace_handle() -> None:
+    from openbox_core.otel.provider import get_or_create_tracer_provider
+
+    get_or_create_tracer_provider()
+    calls: list[tuple[str, int, str | None, str | None]] = []
+
+    def custom_register(trace_id, ctx) -> None:
+        calls.append(("register", trace_id, ctx.activity_type, ctx.metadata.get("llm_type")))
+
+    def custom_unregister(trace_id) -> None:
+        calls.append(("unregister", trace_id, None, None))
+
+    options = make_options(register_trace=custom_register, unregister_trace=custom_unregister)
+    handler = OpenBoxLangChainCoreAsyncCallbackHandler(options)
+
+    run_id = uuid.uuid4()
+    await handler.on_chat_model_start({"name": "fake-model"}, make_messages(), run_id=run_id)
+    assert str(run_id) in options.llm_trace_handles
+    trace_id = options.llm_trace_handles[str(run_id)].trace_id
+    assert trace_id is not None
+    assert calls == [("register", trace_id, "llm_call", "fake-model")]
+
+    await handler.on_llm_end(AIMessage(content="done"), run_id=run_id)
+    assert str(run_id) not in options.llm_trace_handles
+    assert calls[-1] == ("unregister", trace_id, None, None)
 
 
 # ── Completion via gate.aevaluate only (C4 — no enforcement raise) ──────────

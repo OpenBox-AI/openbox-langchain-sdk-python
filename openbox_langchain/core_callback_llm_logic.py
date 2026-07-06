@@ -16,11 +16,15 @@ orphan ``-c`` row.
 
 from __future__ import annotations
 
+import contextlib
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from openbox_core.contracts.context import ActivityContext
 from openbox_core.otel.trace_context import raw_trace_id
+from opentelemetry import context as otel_context
 from opentelemetry import trace as otel_trace
+from opentelemetry.context.context import Context
 
 from openbox_langchain.lifecycle_events import (
     apply_redaction_to_messages,
@@ -35,13 +39,26 @@ if TYPE_CHECKING:
     from openbox_langchain.core_callback_options import OpenBoxLangChainCoreCallbackOptions
 
 __all__ = [
+    "LLM_ACTIVITY_TYPE",
+    "LLMTraceHandle",
     "apply_llm_redaction",
     "build_llm_started_envelope",
-    "register_llm_trace",
+    "finish_llm_trace",
     "send_llm_completed",
     "send_llm_completed_sync",
-    "unregister_llm_trace",
+    "start_llm_trace",
 ]
+
+LLM_ACTIVITY_TYPE = "llm_call"
+_LLM_TRACER = otel_trace.get_tracer("openbox-langchain.llm")
+
+
+@dataclass
+class LLMTraceHandle:
+    trace_id: int | None
+    span: Any
+    token: Any
+    previous_context: Any
 
 
 def build_llm_started_envelope(
@@ -63,7 +80,7 @@ def build_llm_started_envelope(
         run_id=options.run_id,
         workflow_type=options.workflow_type,
         activity_id=activity_id,
-        activity_type=llm_type,
+        activity_type=LLM_ACTIVITY_TYPE,
         task_queue=options.task_queue,
         activity_input=[{"prompt": prompt}],
         session_id=options.session_id,
@@ -161,38 +178,58 @@ def send_llm_completed_sync(
     return verdict
 
 
-def register_llm_trace(
+def _llm_activity_context(
     options: OpenBoxLangChainCoreCallbackOptions, activity_id: str, llm_type: str
-) -> None:
-    """Register the current OTel trace id against this LLM's ActivityContext.
-
-    "Before the provider HTTP" (phase-02 step 7) means: whatever span is
-    ambient at ``on_chat_model_start`` time — callers that want the provider's
-    own HTTP span correlated register a NEW span themselves before invoking
-    the model; here we simply bind the context under whatever trace is
-    current so Layer 2 HTTP-hook instrumentation resolves it. No trace is
-    registered when there is no active OTel span (``trace_id == 0``, the
-    no-op default) — nothing to correlate.
-    """
-    trace_id = raw_trace_id(otel_trace.get_current_span())
-    if not trace_id:
-        return
-    ctx = ActivityContext(
+) -> ActivityContext:
+    return ActivityContext(
         workflow_id=options.workflow_id,
         run_id=options.run_id,
         workflow_type=options.workflow_type,
         task_queue=options.task_queue,
         activity_id=activity_id,
-        activity_type=llm_type,
+        activity_type=LLM_ACTIVITY_TYPE,
         agent_name=options.agent_name,
         session_id=options.session_id,
+        metadata={"llm_type": llm_type},
     )
-    options.register_trace(trace_id, ctx)
 
 
-def unregister_llm_trace(options: OpenBoxLangChainCoreCallbackOptions) -> None:
-    """Unregister the current OTel trace id (mandatory cleanup on completion)."""
-    trace_id = raw_trace_id(otel_trace.get_current_span())
-    if not trace_id:
+def start_llm_trace(
+    options: OpenBoxLangChainCoreCallbackOptions, activity_id: str, llm_type: str
+) -> LLMTraceHandle:
+    """Create/register the LLM parent span before provider HTTP runs.
+
+    Plain LangChain/LangGraph users do not create an upstream OTel span before
+    invoking the model. The SDK owns that parent span so base HTTPX hooks can
+    resolve provider requests to the LLM activity by exact trace id.
+    """
+    span = _LLM_TRACER.start_span("llm.call", kind=otel_trace.SpanKind.INTERNAL)
+    token = otel_context.attach(otel_trace.set_span_in_context(span))
+    previous_context = token.old_value if token.old_value is not token.MISSING else Context()
+    with contextlib.suppress(Exception):
+        span.set_attribute("openbox.activity_id", activity_id)
+        span.set_attribute("openbox.activity_type", LLM_ACTIVITY_TYPE)
+        span.set_attribute("llm.type", llm_type)
+    trace_id = raw_trace_id(span)
+    if trace_id:
+        options.register_trace(trace_id, _llm_activity_context(options, activity_id, llm_type))
+    return LLMTraceHandle(
+        trace_id=trace_id or None,
+        span=span,
+        token=token,
+        previous_context=previous_context,
+    )
+
+
+def finish_llm_trace(
+    options: OpenBoxLangChainCoreCallbackOptions, handle: LLMTraceHandle | None
+) -> None:
+    """Unregister/end an LLM trace without relying on copied-context tokens."""
+    if handle is None:
         return
-    options.unregister_trace(trace_id)
+    if handle.trace_id:
+        options.unregister_trace(handle.trace_id)
+    with contextlib.suppress(Exception):
+        handle.token.var.set(handle.previous_context)
+    with contextlib.suppress(Exception):
+        handle.span.end()
