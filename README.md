@@ -1,6 +1,6 @@
 # OpenBox LangChain SDK — Python
 
-LangChain-Core adapter for OpenBox governance. Provides callback handlers that emit tool and LLM lifecycle events to OpenBox Core's policy engine, enabling real-time governance, guardrails, HITL approval flows, and hook-level governance (HTTP/DB/File I/O) for LangChain agents.
+LangChain-Core adapter for OpenBox governance. Provides callback handlers that emit tool and LLM lifecycle events to OpenBox Core's policy engine, enabling real-time governance, guardrails, HITL approval flows, and base-SDK hook governance (HTTP/DB/File I/O) for LangChain agents.
 
 ## Installation
 
@@ -39,7 +39,7 @@ Two-layer governance architecture:
 | Layer | Mechanism | Governs |
 |-------|-----------|---------|
 | 1 | LangChain-Core Callbacks | Tool and LLM lifecycle emission via `ActivityBridge` |
-| 2 | Hook Governance | HTTP requests, DB queries, file I/O at kernel boundary (via langgraph SDK) |
+| 2 | Base SDK Hook Governance | HTTP requests, DB queries, file I/O at process boundary |
 
 **Core components:**
 - `ActivityBridge` — Ownership channel for tool and LLM events; prevents duplicate governance evaluation
@@ -56,7 +56,6 @@ middleware = create_openbox_langchain_middleware(
     governance_timeout=30.0,             # HTTP timeout in seconds
     validate=True,                       # Validate API key on startup
     session_id="session-123",            # Optional session tracking
-    sqlalchemy_engine=engine,            # Optional DB governance
     tool_type_map={                      # Optional tool classification
         "search_web": "http",
         "query_db": "database",
@@ -81,15 +80,15 @@ middleware = create_openbox_langchain_middleware(
 ## Requirements
 
 - Python 3.11+
-- openbox-sdk-python >= 0.1.0
-- langchain-core >= 0.3.0
-- LangChain >= 0.3.0 (required only for `[agent]` extra — `create_agent` middleware)
+- openbox-sdk-python >= 0.2.0
+- langchain-core >= 1.3.3
+- LangChain >= 1.0.0 (required only for `[agent]` extra, which enables `create_agent` middleware)
 
 ## API Reference
 
 **LangChain-Core callbacks:**
 - `OpenBoxLangChainCoreAsyncCallbackHandler` — Async callback handler for tool/LLM lifecycle
-- `OpenBoxLangChainCoreSync CallbackHandler` — Sync callback handler for tool/LLM lifecycle
+- `OpenBoxLangChainCoreSyncCallbackHandler` — Sync callback handler for tool/LLM lifecycle
 - `ActivityBridge` — Ownership channel for lifecycle event deduplication
 
 **AgentMiddleware (optional):**
