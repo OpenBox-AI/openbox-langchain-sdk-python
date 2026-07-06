@@ -19,3 +19,7 @@ htmlcov/
 .DS_Store
 CLAUDE.md
 plans/
+
+# Content builder generated outputs
+/examples/content-builder-agent/blogs/
+/examples/content-builder-agent/research/
