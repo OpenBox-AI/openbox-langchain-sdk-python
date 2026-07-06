@@ -16,6 +16,8 @@ The `content_writer.py` script shows how to combine these into a working agent u
 export OPENAI_API_KEY="..."
 export OPENBOX_URL="https://core.openbox.ai"
 export OPENBOX_API_KEY="obx_live_..."
+export OPENBOX_AGENT_DID="did:aip:..."          # Required by default for newly registered agents
+export OPENBOX_AGENT_PRIVATE_KEY="..."          # Required by default for newly registered agents
 export GOOGLE_API_KEY="..."      # For image generation
 export TAVILY_API_KEY="..."      # For web search (optional)
 
@@ -29,6 +31,10 @@ uv run python content_writer.py "Write a blog post about prompt engineering"
 uv run python content_writer.py "Create a LinkedIn post about AI agents"
 uv run python content_writer.py "Write a Twitter thread about the future of coding"
 ```
+
+OpenBox enables DID signing by default for newly registered agents. If signing
+has been explicitly disabled for this agent in OpenBox, you can omit
+`OPENBOX_AGENT_DID` and `OPENBOX_AGENT_PRIVATE_KEY`.
 
 ## How It Works
 
@@ -63,6 +69,8 @@ skills_text = load_skills(Path("skills/"))
 middleware = create_openbox_langchain_middleware(
     api_url=os.environ["OPENBOX_URL"],
     api_key=os.environ["OPENBOX_API_KEY"],
+    agent_did=os.environ.get("OPENBOX_AGENT_DID"),
+    agent_private_key=os.environ.get("OPENBOX_AGENT_PRIVATE_KEY"),
     agent_name="ContentWriter",
 )
 

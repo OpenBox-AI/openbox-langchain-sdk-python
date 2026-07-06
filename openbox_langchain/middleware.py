@@ -67,6 +67,8 @@ class OpenBoxLangChainMiddlewareOptions:
     api_url: str | None = None
     api_key: str | None = None
     agent_name: str | None = None
+    agent_did: str | None = None
+    agent_private_key: str | None = None
     session_id: str | None = None
     task_queue: str = "langchain"
     on_api_error: str = "fail_open"

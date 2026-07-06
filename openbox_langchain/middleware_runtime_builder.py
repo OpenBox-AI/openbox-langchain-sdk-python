@@ -39,6 +39,8 @@ def build_middleware_runtime(options: OpenBoxLangChainMiddlewareOptions) -> Open
         on_api_error=options.on_api_error,
         timeout_seconds=options.governance_timeout,
         agent_name=options.agent_name,
+        agent_did=options.agent_did,
+        agent_private_key=options.agent_private_key,
         sdk_version=SDK_PACKAGE_VERSION,
         sdk_engine=SDK_ENGINE,
         sdk_language=SDK_LANGUAGE,

@@ -11,6 +11,8 @@ from openbox_langchain.sdk_metadata import SDK_ENGINE, SDK_LANGUAGE, SDK_PACKAGE
 
 API_URL = "https://test.openbox.ai"
 API_KEY = "obx_test_123"
+AGENT_DID = "did:aip:12345678-1234-5678-1234-567812345678"
+AGENT_PRIVATE_KEY = "c2VjcmV0LXNlZWQtc2VjcmV0LXNlZWQtc2VjcmV0ISE="
 
 
 @pytest.fixture(autouse=True)
@@ -65,6 +67,42 @@ def test_factory_respects_validate_false(_no_validate_by_default):
     create = _import_factory()
     create(api_url=API_URL, api_key=API_KEY, validate=False)
     _no_validate_by_default.assert_not_called()
+
+
+def test_factory_forwards_agent_identity_to_runtime_options():
+    """Factory forwards DID signing config through the base SDK config path."""
+    create = _import_factory()
+    mw = create(
+        api_url=API_URL,
+        api_key=API_KEY,
+        agent_did=AGENT_DID,
+        agent_private_key=AGENT_PRIVATE_KEY,
+        validate=False,
+    )
+    try:
+        assert mw._options.agent_did == AGENT_DID
+        assert mw._options.agent_private_key == AGENT_PRIVATE_KEY
+        assert mw._runtime.config.agent_did == AGENT_DID
+        assert mw._runtime.config.agent_private_key == AGENT_PRIVATE_KEY
+    finally:
+        mw.close()
+
+
+def test_factory_validation_client_receives_agent_identity():
+    """Startup validation client receives a loaded base-SDK identity."""
+    create = _import_factory()
+    with patch("openbox_langchain.middleware_factory.EvaluationClient") as client_cls:
+        client_cls.return_value.validate_api_key.return_value = True
+        create(
+            api_url=API_URL,
+            api_key=API_KEY,
+            agent_did=AGENT_DID,
+            agent_private_key=AGENT_PRIVATE_KEY,
+        )
+
+    identity = client_cls.call_args.kwargs["identity"]
+    assert identity is not None
+    assert identity.agent_did == AGENT_DID
 
 
 def test_factory_sets_agent_name():

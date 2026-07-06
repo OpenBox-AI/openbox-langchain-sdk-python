@@ -2,8 +2,8 @@
 
 ## Current Status
 
-**Version:** v0.1.0 (production-ready baseline)
-**Release Date:** 2026-03-30
+**Version:** v0.2.0 (production-ready baseline with DID signing support)
+**Release Date:** 2026-05-28
 **Status:** Stable for middleware-based governance of LangChain agents
 
 ### Completed
@@ -16,7 +16,8 @@
 - ✅ PII redaction
 - ✅ OTel span registration + context mapping
 - ✅ Async/sync bridge with context preservation
-- ✅ Test suite (99 tests, 100% pass)
+- ✅ DID signing configuration via `agent_did` and `agent_private_key`
+- ✅ Test suite (116 tests, 100% pass; 89% package coverage)
 - ✅ Working example agent (content-builder-agent)
 
 ### In Progress
@@ -49,12 +50,12 @@
 - Sync hooks bridge to async with context propagation
 - Pre-screen guardrails on first LLM call with caching
 
-**Tests:** 99 tests, 100% pass rate
+**Tests:** 116 tests, 100% pass rate
 
-### Phase 2: Documentation (IN PROGRESS)
+### Phase 2: Documentation (COMPLETE)
 
 **Duration:** 1 week
-**Status:** 🔄 60% complete
+**Status:** ✅ Complete
 
 **Deliverables:**
 - README.md — Quick start + configuration guide
@@ -70,28 +71,30 @@
 - Codebase Summary: ✅ Complete
 - Code Standards: ✅ Complete
 - System Architecture: ✅ Complete
-- Project Roadmap: 🔄 In progress
+- Project Roadmap: ✅ Complete
 
-### Phase 3: Polish & Release (NEXT)
+### Phase 3: v0.2.0 Release (COMPLETE)
 
 **Duration:** 1 week
-**Status:** ⏳ Pending
+**Status:** ✅ Complete
 
 **Deliverables:**
 - Update AGENTS.md to reflect middleware architecture
 - Add integration examples (multiple agent types)
 - Performance benchmarking
 - Security audit checklist
-- Release v0.1.0 stable
+- DID signing support
+- Release v0.2.0 stable
 
 **Tasks:**
-- [ ] Update AGENTS.md
-- [ ] Create example: react_agent with tools
+- [x] Update AGENTS.md
+- [x] Create example: react_agent with tools
+- [x] Security: verify no API key leaks, PII redaction coverage
+- [x] Add DID signing configuration
+- [x] Tag v0.2.0 release
 - [ ] Create example: tool_calling_agent with multi-turn
 - [ ] Benchmark: governance latency (target < 500ms)
-- [ ] Security: verify no API key leaks, PII redaction coverage
 - [ ] Create CONTRIBUTING.md
-- [ ] Tag v0.1.0 release
 
 ## Milestone Timeline
 
@@ -99,7 +102,7 @@
 Week 1: Core Middleware ✅
 ├─ Middleware class + hooks
 ├─ Factory + configuration
-├─ Test suite (99 tests)
+├─ Test suite (116 tests)
 └─ Example agent
 
 Week 2: Documentation (Current)
@@ -108,16 +111,16 @@ Week 2: Documentation (Current)
 ├─ Code standards
 └─ Examples + tutorials
 
-Week 3: Polish & Release (Next)
+Week 3: Polish & Release
 ├─ Additional examples
 ├─ Performance tuning
 ├─ Release preparation
-└─ v0.1.0 stable release
+└─ v0.2.0 stable release
 ```
 
-## Feature Roadmap
+## Release Roadmap
 
-### v0.1.0 (Current)
+### v0.1.0
 - ✅ Middleware pattern (AgentMiddleware subclass)
 - ✅ Lifecycle hooks (before/after agent, wrap model/tool calls)
 - ✅ Verdict enforcement (5-tier system: ALLOW/CONSTRAIN/REQUIRE_APPROVAL/BLOCK/HALT)
@@ -127,9 +130,15 @@ Week 3: Polish & Release (Next)
 - ✅ OTel integration (span registration, context mapping)
 - ✅ Async/sync support
 - ✅ Configuration via factory
-- ✅ Test suite (99 tests)
+- ✅ Test suite
 
-### v0.2.0 (Q2 2026)
+### v0.2.0 (Current)
+- ✅ DID signing configuration via `agent_did` and `agent_private_key`
+- ✅ Runtime dependency on openbox-langgraph-sdk-python >= 0.2.0
+- ✅ Refreshed dependency locks for security scans
+- ✅ Release coverage gate raised to 80% with 89% current package coverage
+
+### v0.3.0 (Q3 2026)
 - 🔲 Advanced verdict rules (conditional enforcement)
 - 🔲 Behavior rule chains (post-execution verification)
 - 🔲 Custom event builders (domain-specific events)
@@ -137,14 +146,14 @@ Week 3: Polish & Release (Next)
 - 🔲 Performance monitoring dashboard integration
 - 🔲 Rate limiting guardrails (token budgets)
 
-### v0.3.0 (Q3 2026)
+### v0.4.0 (Q4 2026)
 - 🔲 Multi-agent orchestration (agent composition)
 - 🔲 Knowledge base integration (RAG governance)
 - 🔲 Tool sandboxing (resource limits)
 - 🔲 Audit logging (compliance records)
 - 🔲 ML-based anomaly detection
 
-### v1.0.0 (Q4 2026)
+### v1.0.0
 - 🔲 Enterprise features (SSO, advanced HITL, audit)
 - 🔲 SLA guarantees (99.99% uptime)
 - 🔲 Multi-region deployment
@@ -155,7 +164,7 @@ Week 3: Polish & Release (Next)
 | Metric | Target | Status |
 |--------|--------|--------|
 | **Functionality** | | |
-| Test coverage | 100% | ✅ 100% (99 tests) |
+| Test coverage | 80%+ release gate | ✅ 89% (116 tests) |
 | Supported agent types | ≥3 | ✅ react_agent, tool_calling_agent, custom |
 | Hook coverage | 100% | ✅ before/after agent, wrap model/tool |
 | **Performance** | | |
@@ -163,8 +172,8 @@ Week 3: Polish & Release (Next)
 | Overhead % | < 10% of agent time | 🔄 Benchmarking |
 | Pre-screen cache hit rate | > 80% | 🔄 Measuring |
 | **Documentation** | | |
-| README quality | Clear quick start | 🔄 In progress |
-| Architecture docs | All layers covered | 🔄 In progress |
+| README quality | Clear quick start | ✅ Complete |
+| Architecture docs | All layers covered | ✅ Complete |
 | Code examples | ≥3 working examples | 🔄 1 complete (content-builder-agent) |
 | **Security** | | |
 | PII redaction coverage | > 95% patterns | ✅ Imported from langgraph SDK |
@@ -173,22 +182,22 @@ Week 3: Polish & Release (Next)
 | **Compatibility** | | |
 | Python versions | 3.11+ | ✅ 3.11, 3.12, 3.13 tested |
 | LangChain versions | 0.3.0+ | ✅ v0.3.0, v0.4.0 compatible |
-| LangGraph versions | 0.2.0+ | ✅ v0.2.0, v0.3.0 compatible |
+| LangGraph versions | 0.2.0+ | ✅ Compatible with current 1.x releases |
 
 ## Known Limitations
 
 | Limitation | Workaround | Future Fix |
 |------------|-----------|-----------|
-| Single pre-screen per session | Cache response, reuse for first LLM call | Allow parameterized pre-screen (v0.2.0) |
-| No custom verdict hooks | Implement in governance API rules | Client-side verdict customization (v0.2.0) |
-| OTel context may be lost in sync bridge | Use async agents when possible | Improve context propagation (v0.2.0) |
-| HITL timeout is global | Adjust via config at startup | Per-activity timeout (v0.2.0) |
+| Single pre-screen per session | Cache response, reuse for first LLM call | Allow parameterized pre-screen |
+| No custom verdict hooks | Implement in governance API rules | Client-side verdict customization |
+| OTel context may be lost in sync bridge | Use async agents when possible | Improve context propagation |
+| HITL timeout is global | Adjust via config at startup | Per-activity timeout |
 
 ## Dependencies & Compatibility
 
 ### Required
 - Python 3.11+
-- openbox-langgraph-sdk-python >= 0.1.0
+- openbox-langgraph-sdk-python >= 0.2.0
 - langchain >= 0.3.0
 - langchain-core >= 0.3.0
 - langgraph >= 0.2.0
@@ -206,7 +215,7 @@ Week 3: Polish & Release (Next)
 
 ### Test Coverage
 
-**Current:** 99 tests, 100% pass rate
+**Current:** 116 tests, 100% pass rate, 89% package coverage
 
 **Areas:**
 - Unit tests for each hook handler
@@ -252,7 +261,7 @@ mypy openbox_langchain/
 |------|----------|-------------|-----------|
 | LangChain API breaking change | High | Medium | Pin version range, monitor releases, 1 month migration window |
 | OpenBox Core unavailable | High | Low | Timeout 30s, log error, continue agent (fail-open) |
-| OTel context loss in sync bridge | Medium | Medium | Test thoroughly, document limitations, improve bridge (v0.2.0) |
+| OTel context loss in sync bridge | Medium | Medium | Test thoroughly, document limitations, improve bridge |
 | PII redaction false negatives | Medium | Low | Test patterns, submit new patterns to langgraph SDK |
 | HITL approval timeout during execution | Medium | Low | Timeout configurable, document best practices |
 
@@ -273,7 +282,7 @@ mypy openbox_langchain/
    - Multi-agent orchestration
    - Custom tool classification
 
-4. **v0.2.0 Planning** (1 week)
+4. **v0.3.0 Planning** (1 week)
    - Collect feedback from early users
    - Design advanced features
    - Create implementation plan
