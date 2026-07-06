@@ -21,3 +21,7 @@ CLAUDE.md
 plans/
 
 .vscode/
+
+# Content builder generated outputs
+/examples/content-builder-agent/blogs/
+/examples/content-builder-agent/research/

@@ -1,144 +1,189 @@
 """Tool governance hook for OpenBoxLangChainMiddleware.
 
 Separated from middleware_hook_handlers.py to stay under 200 lines per file.
+Wraps tool execution in ``activity_scope(...)`` (bound to the middleware's
+own ``ContextStore``) so Layer-2 HTTP/DB/file instrumentation resolves the
+right ``ActivityContext`` for the duration of the tool body — replacing the
+removed ``WorkflowSpanProcessor`` wiring.
 """
 
 from __future__ import annotations
 
-import logging
-import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from openbox_langgraph.errors import GovernanceBlockedError, GovernanceHaltError
-from openbox_langgraph.types import LangChainGovernanceEvent, safe_serialize
-from openbox_langgraph.verdict_handler import enforce_verdict
+from openbox_core.context import activity_scope
+from openbox_core.contracts.context import ActivityContext
+from openbox_core.serialization import to_json_safe
 
+from openbox_langchain.lifecycle_events import build_activity_completed, build_activity_started
 from openbox_langchain.middleware_hooks import (
-    _base_event_fields,
-    _evaluate,
-    _extract_governance_blocked,
-    _poll_approval_or_halt,
-    _run_with_otel_context,
+    enforce_start_verdict_async,
+    enforce_start_verdict_sync,
+    evaluate_lifecycle_async,
+    evaluate_lifecycle_sync,
 )
 
-_logger = logging.getLogger("openbox_langchain")
-
 if TYPE_CHECKING:
+    from openbox_core.contracts.events import EventEnvelope
+
     from openbox_langchain.middleware import OpenBoxLangChainMiddleware
+    from openbox_langchain.middleware_turn_state import MiddlewareTurnState
+
+__all__ = ["handle_wrap_tool_call", "handle_wrap_tool_call_sync"]
+
+
+def _tool_call_context(
+    mw: OpenBoxLangChainMiddleware, turn: MiddlewareTurnState, activity_id: str, tool_name: str,
+) -> ActivityContext:
+    return ActivityContext(
+        workflow_id=turn.workflow_id, run_id=turn.run_id, workflow_type=mw._workflow_type,
+        task_queue=mw._options.task_queue, activity_id=activity_id, activity_type=tool_name,
+        agent_name=mw._options.agent_name, session_id=mw._options.session_id,
+    )
+
+
+def _build_tool_started(
+    mw: OpenBoxLangChainMiddleware, turn: MiddlewareTurnState, activity_id: str,
+    tool_name: str, tool_args: Any,
+) -> EventEnvelope:
+    return build_activity_started(
+        workflow_id=turn.workflow_id, run_id=turn.run_id, workflow_type=mw._workflow_type,
+        activity_id=activity_id, activity_type=tool_name, task_queue=mw._options.task_queue,
+        activity_input=[to_json_safe(tool_args)],
+        session_id=mw._options.session_id, agent_name=mw._options.agent_name,
+    )
+
+
+def _build_tool_completed(
+    mw: OpenBoxLangChainMiddleware, turn: MiddlewareTurnState, activity_id: str, tool_name: str,
+    *, result: Any = None, error: str | None = None,
+) -> EventEnvelope:
+    return build_activity_completed(
+        workflow_id=turn.workflow_id, run_id=turn.run_id, workflow_type=mw._workflow_type,
+        activity_id=activity_id, activity_type=tool_name, task_queue=mw._options.task_queue,
+        result=to_json_safe(result) if result is not None else None, error=error,
+        session_id=mw._options.session_id, agent_name=mw._options.agent_name,
+    )
 
 
 async def handle_wrap_tool_call(
-    mw: OpenBoxLangChainMiddleware, request: Any, handler: Any,
+    mw: OpenBoxLangChainMiddleware, turn: MiddlewareTurnState, request: Any, handler: Any,
 ) -> Any:
-    """Tool governance: ToolStarted → Tool (OTel spans) → ToolCompleted."""
+    """Tool governance: ToolStarted → Tool (activity_scope) → ToolCompleted (async)."""
     tool_name = request.tool_call["name"]
     tool_args = request.tool_call.get("args", {})
 
-    # Skip governance for excluded tools
-    if tool_name in mw._config.skip_tool_types:
+    if tool_name in mw._options.skip_tool_types:
         return await handler(request)
 
     activity_id = str(uuid.uuid4())
-    tool_type = mw._config.tool_type_map.get(tool_name)
-    base = _base_event_fields(mw)
+    ctx = _tool_call_context(mw, turn, activity_id, tool_name)
 
-    # Register SpanProcessor context for Layer 2 hooks
-    if mw._span_processor:
-        mw._span_processor.set_activity_context(mw._workflow_id, activity_id, {
-            **base, "event_type": "ActivityStarted",
-            "activity_id": activity_id, "activity_type": tool_name,
-        })
-
-    # ToolStarted + verdict enforcement
-    if mw._config.send_tool_start_event:
-        gov = LangChainGovernanceEvent(
-            **base, event_type="ToolStarted", activity_id=activity_id,
-            activity_type=tool_name, activity_input=[safe_serialize(tool_args)],
-            tool_name=tool_name, tool_type=tool_type,
+    if mw._options.send_tool_start_event:
+        response = await evaluate_lifecycle_async(
+            mw, _build_tool_started(mw, turn, activity_id, tool_name, tool_args)
         )
-        response = await _evaluate(mw, gov)
-        if response is not None:
-            result = enforce_verdict(response, "tool_start")
-            if result.requires_hitl:
-                try:
-                    await _poll_approval_or_halt(mw, activity_id, tool_name)
-                except GovernanceHaltError:
-                    if mw._span_processor:
-                        mw._span_processor.clear_activity_context(
-                            mw._workflow_id, activity_id
-                        )
-                    raise
-
-    # Execute tool with OTel span + HITL retry loop
-    start = time.monotonic()
-    while True:
         try:
-            tool_result = await _run_with_otel_context(
-                mw, f"tool.{tool_name}", activity_id, handler, request,
-            )
-            break
-        except GovernanceBlockedError as hook_err:
-            if hook_err.verdict != "require_approval":
-                duration_ms = (time.monotonic() - start) * 1000
-                await _send_tool_failed(
-                    mw, activity_id, tool_name, tool_type, hook_err, duration_ms,
-                )
-                raise
-            await _poll_approval_or_halt(mw, activity_id, tool_name)
+            await enforce_start_verdict_async(mw, response)
         except Exception as exc:
-            hook_err = _extract_governance_blocked(exc)
-            if hook_err is not None and hook_err.verdict == "require_approval":
-                await _poll_approval_or_halt(mw, activity_id, tool_name)
-            else:
-                duration_ms = (time.monotonic() - start) * 1000
-                await _send_tool_failed(mw, activity_id, tool_name, tool_type, exc, duration_ms)
-                raise
-    duration_ms = (time.monotonic() - start) * 1000
+            await _close_orphan_start_async(mw, turn, activity_id, tool_name, str(exc))
+            raise
 
-    # Clear SpanProcessor context
-    if mw._span_processor:
-        mw._span_processor.clear_activity_context(mw._workflow_id, activity_id)
+    try:
+        with activity_scope(ctx, store=mw._runtime.context_store):
+            tool_result = await handler(request)
+    except Exception as exc:
+        await _send_tool_failed_async(mw, turn, activity_id, tool_name, exc)
+        raise
 
-    # ToolCompleted + verdict enforcement
-    if mw._config.send_tool_end_event:
-        try:
-            serialized_output = (
-                safe_serialize({"result": tool_result})
-                if isinstance(tool_result, str)
-                else safe_serialize(tool_result)
-            )
-        except Exception:
-            serialized_output = {"result": str(tool_result)}
-        completed = LangChainGovernanceEvent(
-            **_base_event_fields(mw), event_type="ToolCompleted",
-            activity_id=f"{activity_id}-c", activity_type=tool_name,
-            activity_output=serialized_output, tool_name=tool_name,
-            tool_type=tool_type, status="completed", duration_ms=duration_ms,
+    if mw._options.send_tool_end_event:
+        await evaluate_lifecycle_async(
+            mw, _build_tool_completed(mw, turn, activity_id, tool_name, result=tool_result)
         )
-        resp = await _evaluate(mw, completed)
-        if resp is not None:
-            result = enforce_verdict(resp, "tool_end")
-            if result.requires_hitl:
-                await _poll_approval_or_halt(mw, f"{activity_id}-c", tool_name)
-
     return tool_result
 
 
-async def _send_tool_failed(
-    mw: OpenBoxLangChainMiddleware,
-    activity_id: str, tool_name: str, tool_type: str | None,
-    error: Exception, duration_ms: float,
-) -> None:
-    """Send ToolCompleted with failed status."""
-    if mw._span_processor:
-        mw._span_processor.clear_activity_context(mw._workflow_id, activity_id)
-    if mw._config.send_tool_end_event:
-        failed_event = LangChainGovernanceEvent(
-            **_base_event_fields(mw), event_type="ToolCompleted",
-            activity_id=f"{activity_id}-c", activity_type=tool_name,
-            activity_output=safe_serialize({"error": str(error)}),
-            tool_name=tool_name, tool_type=tool_type,
-            status="failed", duration_ms=duration_ms,
+def handle_wrap_tool_call_sync(
+    mw: OpenBoxLangChainMiddleware, turn: MiddlewareTurnState, request: Any, handler: Any,
+) -> Any:
+    """Tool governance: ToolStarted → Tool (activity_scope) → ToolCompleted (sync)."""
+    tool_name = request.tool_call["name"]
+    tool_args = request.tool_call.get("args", {})
+
+    if tool_name in mw._options.skip_tool_types:
+        return handler(request)
+
+    activity_id = str(uuid.uuid4())
+    ctx = _tool_call_context(mw, turn, activity_id, tool_name)
+
+    if mw._options.send_tool_start_event:
+        response = evaluate_lifecycle_sync(
+            mw, _build_tool_started(mw, turn, activity_id, tool_name, tool_args)
         )
-        await _evaluate(mw, failed_event)
+        try:
+            enforce_start_verdict_sync(mw, response)
+        except Exception as exc:
+            _close_orphan_start_sync(mw, turn, activity_id, tool_name, str(exc))
+            raise
+
+    try:
+        with activity_scope(ctx, store=mw._runtime.context_store):
+            tool_result = handler(request)
+    except Exception as exc:
+        _send_tool_failed_sync(mw, turn, activity_id, tool_name, exc)
+        raise
+
+    if mw._options.send_tool_end_event:
+        evaluate_lifecycle_sync(
+            mw, _build_tool_completed(mw, turn, activity_id, tool_name, result=tool_result)
+        )
+    return tool_result
+
+
+# ─── Failure-path completions (orphan close + tool-body error) ─────────────
+
+
+async def _close_orphan_start_async(
+    mw: OpenBoxLangChainMiddleware, turn: MiddlewareTurnState, activity_id: str,
+    tool_name: str, error: str,
+) -> None:
+    """Close a stop-shaped ToolStarted with a failed ToolCompleted (same id, C6)."""
+    if not mw._options.send_tool_end_event:
+        return
+    await evaluate_lifecycle_async(
+        mw, _build_tool_completed(mw, turn, activity_id, tool_name, error=error)
+    )
+
+
+def _close_orphan_start_sync(
+    mw: OpenBoxLangChainMiddleware, turn: MiddlewareTurnState, activity_id: str,
+    tool_name: str, error: str,
+) -> None:
+    if not mw._options.send_tool_end_event:
+        return
+    evaluate_lifecycle_sync(
+        mw, _build_tool_completed(mw, turn, activity_id, tool_name, error=error)
+    )
+
+
+async def _send_tool_failed_async(
+    mw: OpenBoxLangChainMiddleware, turn: MiddlewareTurnState, activity_id: str,
+    tool_name: str, error: Exception,
+) -> None:
+    if not mw._options.send_tool_end_event:
+        return
+    await evaluate_lifecycle_async(
+        mw, _build_tool_completed(mw, turn, activity_id, tool_name, error=str(error))
+    )
+
+
+def _send_tool_failed_sync(
+    mw: OpenBoxLangChainMiddleware, turn: MiddlewareTurnState, activity_id: str,
+    tool_name: str, error: Exception,
+) -> None:
+    if not mw._options.send_tool_end_event:
+        return
+    evaluate_lifecycle_sync(
+        mw, _build_tool_completed(mw, turn, activity_id, tool_name, error=str(error))
+    )

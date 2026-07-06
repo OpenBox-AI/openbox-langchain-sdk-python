@@ -1,501 +1,314 @@
-"""Tests for middleware_tool_hook.py tool governance implementation."""
+"""Tests for middleware_tool_hook.py (ToolStarted -> Tool -> ToolCompleted)."""
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from openbox_langgraph.errors import GovernanceHaltError
-from openbox_langgraph.types import GovernanceVerdictResponse
+from openbox_core.errors import GovernanceBlockedError, GovernanceHaltError
 
-from openbox_langchain.middleware_tool_hook import _send_tool_failed, handle_wrap_tool_call
+from openbox_langchain.middleware_tool_hook import handle_wrap_tool_call, handle_wrap_tool_call_sync
+from openbox_langchain.middleware_turn_state import MiddlewareTurnState
+from tests.fakes_core_callback import (
+    FakeAdapter,
+    FakeGate,
+    FakeRuntime,
+    block_result,
+    halt_result,
+    require_approval_result,
+)
 
-# ─── Fixtures ──────────────────────────────────────────────────────────
+WORKFLOW_TYPE = "TestAgent"
 
 
-@pytest.fixture
-def mock_middleware():
-    """Create a configured mock OpenBoxLangChainMiddleware."""
+def make_mw(*, gate: FakeGate | None = None, adapter: FakeAdapter | None = None) -> MagicMock:
     mw = MagicMock()
-    mw._client = AsyncMock()
-    mw._config = MagicMock()
-    mw._config.send_tool_start_event = True
-    mw._config.send_tool_end_event = True
-    mw._config.skip_tool_types = set()
-    mw._config.tool_type_map = {}
-    mw._config.task_queue = "langchain"
-    mw._config.session_id = None
-    mw._config.hitl = None
-    mw._sync_mode = False
-    mw._workflow_id = "wf-123"
-    mw._run_id = "run-456"
-    mw._workflow_type = "TestAgent"
-    mw._span_processor = None
+    mw._workflow_type = WORKFLOW_TYPE
+    mw._options = MagicMock()
+    mw._options.task_queue = "langchain"
+    mw._options.session_id = None
+    mw._options.agent_name = None
+    mw._options.skip_tool_types = set()
+    mw._options.send_tool_start_event = True
+    mw._options.send_tool_end_event = True
+    mw._runtime = FakeRuntime(gate=gate or FakeGate(), adapter=adapter or FakeAdapter())
     return mw
 
 
-@pytest.fixture
-def mock_tool_request():
-    """Create a mock ToolCallRequest."""
+def make_turn(*, sync_mode: bool = False) -> MiddlewareTurnState:
+    return MiddlewareTurnState.new(sync_mode=sync_mode)
+
+
+def make_request(name: str = "search_web", args: dict | None = None) -> MagicMock:
     request = MagicMock()
-    request.tool_call = {"name": "search_web", "args": {"query": "test"}}
+    request.tool_call = {"name": name, "args": args or {"query": "test"}}
     return request
 
 
-# ─── handle_wrap_tool_call ─────────────────────────────────────────────
+def block_first_gate(*, halt: bool = False) -> FakeGate:
+    verdict_fn = halt_result if halt else block_result
+
+    class BlockFirstGate(FakeGate):
+        async def aevaluate(self, event):  # type: ignore[override]
+            if event.event_type.value == "ActivityStarted":
+                self.verdicts[event.activity_id] = verdict_fn()
+            return await super().aevaluate(event)
+
+        def evaluate(self, event):  # type: ignore[override]
+            if event.event_type.value == "ActivityStarted":
+                self.verdicts[event.activity_id] = verdict_fn()
+            return super().evaluate(event)
+
+    return BlockFirstGate()
 
 
-@pytest.mark.asyncio
-async def test_handle_wrap_tool_call_sends_tool_started(mock_middleware, mock_tool_request):
-    """Send ToolStarted event."""
+def approval_first_gate() -> FakeGate:
+    class ApprovalFirstGate(FakeGate):
+        async def aevaluate(self, event):  # type: ignore[override]
+            if event.event_type.value == "ActivityStarted":
+                self.verdicts[event.activity_id] = require_approval_result()
+            return await super().aevaluate(event)
+
+        def evaluate(self, event):  # type: ignore[override]
+            if event.event_type.value == "ActivityStarted":
+                self.verdicts[event.activity_id] = require_approval_result()
+            return super().evaluate(event)
+
+    return ApprovalFirstGate()
+
+
+# ─── handle_wrap_tool_call (async) ─────────────────────────────────────
+
+
+async def test_handle_wrap_tool_call_sends_tool_started_and_completed():
+    gate = FakeGate()
+    mw = make_mw(gate=gate)
+    turn = make_turn()
     handler = AsyncMock(return_value="tool result")
 
-    with patch(
-        "openbox_langchain.middleware_tool_hook._evaluate",
-        new_callable=AsyncMock,
-        return_value=None,  # No verdict means allow
-    ) as mock_eval:
-        with patch(
-            "openbox_langchain.middleware_tool_hook._run_with_otel_context",
-            new_callable=AsyncMock,
-            return_value="tool result",
-        ):
-            result = await handle_wrap_tool_call(mock_middleware, mock_tool_request, handler)
+    result = await handle_wrap_tool_call(mw, turn, make_request(), handler)
 
-    # Should have called _evaluate for ToolStarted and ToolCompleted
-    events = [call[0][1] for call in mock_eval.call_args_list]
-    event_types = [e.event_type for e in events]
-    assert "ToolStarted" in event_types
+    event_types = [e.payload.get("event_type") for e in gate.sent]
+    assert "ActivityStarted" in event_types
+    assert "ActivityCompleted" in event_types
     assert result == "tool result"
+    handler.assert_awaited_once()
 
 
-@pytest.mark.asyncio
-async def test_handle_wrap_tool_call_sends_tool_completed(mock_middleware, mock_tool_request):
-    """Send ToolCompleted event."""
+async def test_handle_wrap_tool_call_completion_reuses_start_id_no_suffix():
+    gate = FakeGate()
+    mw = make_mw(gate=gate)
+    turn = make_turn()
     handler = AsyncMock(return_value="tool result")
 
-    with patch(
-        "openbox_langchain.middleware_tool_hook._evaluate",
-        new_callable=AsyncMock,
-        return_value=None,
-    ) as mock_eval:
-        with patch(
-            "openbox_langchain.middleware_tool_hook._run_with_otel_context",
-            new_callable=AsyncMock,
-            return_value="tool result",
-        ):
-            await handle_wrap_tool_call(mock_middleware, mock_tool_request, handler)
+    await handle_wrap_tool_call(mw, turn, make_request(), handler)
 
-    # Should have called _evaluate for ToolCompleted
-    events = [call[0][1] for call in mock_eval.call_args_list]
-    event_types = [e.event_type for e in events]
-    assert "ToolCompleted" in event_types
+    started = next(e for e in gate.sent if e.payload.get("event_type") == "ActivityStarted")
+    completed = next(e for e in gate.sent if e.payload.get("event_type") == "ActivityCompleted")
+    assert started.activity_id == completed.activity_id
+    assert not (completed.activity_id or "").endswith("-c")
 
 
-@pytest.mark.asyncio
-async def test_handle_wrap_tool_call_enforces_block_verdict(mock_middleware, mock_tool_request):
-    """Enforce block verdict from ToolStarted."""
-    verdict = MagicMock(spec=GovernanceVerdictResponse)
-    verdict.verdict = "block"
-    verdict.requires_hitl = False
-
+async def test_handle_wrap_tool_call_block_prevents_body_and_raises():
+    gate = block_first_gate()
+    mw = make_mw(gate=gate)
+    turn = make_turn()
     handler = AsyncMock(return_value="tool result")
 
-    with patch(
-        "openbox_langchain.middleware_tool_hook._evaluate",
-        new_callable=AsyncMock,
-        return_value=verdict,
-    ):
-        with patch(
-            "openbox_langchain.middleware_tool_hook.enforce_verdict",
-            side_effect=RuntimeError("blocked"),
-        ):
-            with pytest.raises(RuntimeError, match="blocked"):
-                await handle_wrap_tool_call(mock_middleware, mock_tool_request, handler)
+    with pytest.raises(GovernanceBlockedError):
+        await handle_wrap_tool_call(mw, turn, make_request(), handler)
+
+    handler.assert_not_awaited()
 
 
-@pytest.mark.asyncio
-async def test_handle_wrap_tool_call_skips_governance_for_excluded_tools(mock_middleware):
-    """Skip governance for tools in skip_tool_types."""
-    mock_middleware._config.skip_tool_types = {"internal_tool"}
-    request = MagicMock()
-    request.tool_call = {"name": "internal_tool", "args": {}}
+async def test_handle_wrap_tool_call_halt_prevents_body_and_raises():
+    gate = block_first_gate(halt=True)
+    mw = make_mw(gate=gate)
+    turn = make_turn()
+    handler = AsyncMock(return_value="tool result")
 
+    with pytest.raises(GovernanceHaltError):
+        await handle_wrap_tool_call(mw, turn, make_request(), handler)
+
+    handler.assert_not_awaited()
+
+
+async def test_handle_wrap_tool_call_block_closes_orphan_start_same_id():
+    """C6: a stop-shaped ToolStarted closes its own row (same id) before raising."""
+    gate = block_first_gate()
+    mw = make_mw(gate=gate)
+    turn = make_turn()
+    handler = AsyncMock(return_value="tool result")
+
+    with pytest.raises(GovernanceBlockedError):
+        await handle_wrap_tool_call(mw, turn, make_request(), handler)
+
+    started = [e for e in gate.sent if e.payload.get("event_type") == "ActivityStarted"]
+    completed = [e for e in gate.sent if e.payload.get("event_type") == "ActivityCompleted"]
+    assert len(started) == 1
+    assert len(completed) == 1
+    assert started[0].activity_id == completed[0].activity_id
+    assert completed[0].payload.get("error")
+
+
+async def test_handle_wrap_tool_call_require_approval_awaits_adapter():
+    gate = approval_first_gate()
+    adapter = FakeAdapter()
+    adapter.auto_approve = True
+    mw = make_mw(gate=gate, adapter=adapter)
+    turn = make_turn()
+    handler = AsyncMock(return_value="tool result")
+
+    result = await handle_wrap_tool_call(mw, turn, make_request(), handler)
+
+    assert result == "tool result"
+    assert len(adapter.approval_calls) == 1
+    handler.assert_awaited_once()
+
+
+async def test_handle_wrap_tool_call_require_approval_rejected_never_runs_body():
+    gate = approval_first_gate()
+    mw = make_mw(gate=gate)  # default adapter rejects (no auto_approve)
+    turn = make_turn()
+    handler = AsyncMock(return_value="tool result")
+
+    from openbox_core.errors import ApprovalRejectedError
+
+    with pytest.raises(ApprovalRejectedError):
+        await handle_wrap_tool_call(mw, turn, make_request(), handler)
+    handler.assert_not_awaited()
+
+
+async def test_handle_wrap_tool_call_skips_governance_for_excluded_tools():
+    mw = make_mw()
+    mw._options.skip_tool_types = {"internal_tool"}
+    turn = make_turn()
     handler = AsyncMock(return_value="result")
 
-    with patch(
-        "openbox_langchain.middleware_tool_hook._evaluate",
-        new_callable=AsyncMock,
-    ) as mock_eval:
-        result = await handle_wrap_tool_call(mock_middleware, request, handler)
+    result = await handle_wrap_tool_call(mw, turn, make_request("internal_tool"), handler)
 
-    # Should not have called _evaluate
-    assert mock_eval.call_count == 0
-    handler.assert_called_once()
+    assert mw._runtime.gate.sent == []
+    handler.assert_awaited_once()
     assert result == "result"
 
 
-@pytest.mark.asyncio
-async def test_handle_wrap_tool_call_registers_span_processor_context(
-    mock_middleware, mock_tool_request
-):
-    """Register activity context in span processor."""
-    mock_middleware._span_processor = MagicMock()
-    handler = AsyncMock(return_value="tool result")
+async def test_handle_wrap_tool_call_tool_body_error_sends_failed_completion():
+    gate = FakeGate()
+    mw = make_mw(gate=gate)
+    turn = make_turn()
+    handler = AsyncMock(side_effect=RuntimeError("tool crashed"))
 
-    with patch(
-        "openbox_langchain.middleware_tool_hook._evaluate",
-        new_callable=AsyncMock,
-        return_value=None,
-    ):
-        with patch(
-            "openbox_langchain.middleware_tool_hook._run_with_otel_context",
-            new_callable=AsyncMock,
-            return_value="tool result",
-        ):
-            await handle_wrap_tool_call(mock_middleware, mock_tool_request, handler)
+    with pytest.raises(RuntimeError, match="tool crashed"):
+        await handle_wrap_tool_call(mw, turn, make_request(), handler)
 
-    # Should have called set_activity_context
-    mock_middleware._span_processor.set_activity_context.assert_called_once()
+    completed = [e for e in gate.sent if e.payload.get("event_type") == "ActivityCompleted"]
+    assert len(completed) == 1
+    assert "tool crashed" in completed[0].payload.get("error", "")
 
 
-@pytest.mark.asyncio
-async def test_handle_wrap_tool_call_clears_span_processor_context(
-    mock_middleware, mock_tool_request
-):
-    """Clear activity context after execution."""
-    mock_middleware._span_processor = MagicMock()
-    handler = AsyncMock(return_value="tool result")
+async def test_handle_wrap_tool_call_skips_tool_start_when_flag_false():
+    mw = make_mw()
+    mw._options.send_tool_start_event = False
+    turn = make_turn()
+    handler = AsyncMock(return_value="result")
 
-    with patch(
-        "openbox_langchain.middleware_tool_hook._evaluate",
-        new_callable=AsyncMock,
-        return_value=None,
-    ):
-        with patch(
-            "openbox_langchain.middleware_tool_hook._run_with_otel_context",
-            new_callable=AsyncMock,
-            return_value="tool result",
-        ):
-            await handle_wrap_tool_call(mock_middleware, mock_tool_request, handler)
+    await handle_wrap_tool_call(mw, turn, make_request(), handler)
 
-    # Should have called clear_activity_context
-    mock_middleware._span_processor.clear_activity_context.assert_called_once()
+    event_types = [e.payload.get("event_type") for e in mw._runtime.gate.sent]
+    assert "ActivityStarted" not in event_types
 
 
-@pytest.mark.asyncio
-async def test_handle_wrap_tool_call_hitl_polling_on_require_approval(
-    mock_middleware, mock_tool_request
-):
-    """Poll for HITL approval when required."""
-    verdict = MagicMock(spec=GovernanceVerdictResponse)
-    verdict.verdict = "require_approval"
-    verdict.requires_hitl = True
+async def test_handle_wrap_tool_call_skips_tool_end_when_flag_false():
+    mw = make_mw()
+    mw._options.send_tool_end_event = False
+    turn = make_turn()
+    handler = AsyncMock(return_value="result")
 
-    handler = AsyncMock(return_value="tool result")
+    await handle_wrap_tool_call(mw, turn, make_request(), handler)
 
-    with patch(
-        "openbox_langchain.middleware_tool_hook._evaluate",
-        new_callable=AsyncMock,
-        return_value=verdict,
-    ):
-        with patch(
-            "openbox_langchain.middleware_tool_hook.enforce_verdict",
-            return_value=verdict,
-        ):
-            with patch(
-                "openbox_langchain.middleware_tool_hook._poll_approval_or_halt",
-                new_callable=AsyncMock,
-            ) as mock_poll:
-                with patch(
-                    "openbox_langchain.middleware_tool_hook._run_with_otel_context",
-                    new_callable=AsyncMock,
-                    side_effect=handler,
-                ):
-                    await handle_wrap_tool_call(mock_middleware, mock_tool_request, handler)
-
-                # Should have called polling
-                assert mock_poll.call_count >= 1
+    event_types = [e.payload.get("event_type") for e in mw._runtime.gate.sent]
+    assert "ActivityCompleted" not in event_types
 
 
-@pytest.mark.asyncio
-async def test_handle_wrap_tool_call_hitl_halt_stops_execution(mock_middleware, mock_tool_request):
-    """Stop execution if HITL approval is rejected."""
-    verdict = MagicMock(spec=GovernanceVerdictResponse)
-    verdict.verdict = "require_approval"
-    verdict.requires_hitl = True
+async def test_handle_wrap_tool_call_includes_tool_args_in_started_input():
+    gate = FakeGate()
+    mw = make_mw(gate=gate)
+    turn = make_turn()
+    handler = AsyncMock(return_value="result")
 
-    handler = AsyncMock(return_value="tool result")
+    await handle_wrap_tool_call(mw, turn, make_request(args={"query": "abc"}), handler)
 
-    with patch(
-        "openbox_langchain.middleware_tool_hook._evaluate",
-        new_callable=AsyncMock,
-        return_value=verdict,
-    ):
-        with patch(
-            "openbox_langchain.middleware_tool_hook.enforce_verdict",
-            return_value=verdict,
-        ):
-            with patch(
-                "openbox_langchain.middleware_tool_hook._poll_approval_or_halt",
-                new_callable=AsyncMock,
-                side_effect=GovernanceHaltError("rejected"),
-            ):
-                mock_middleware._span_processor = MagicMock()
-                with pytest.raises(GovernanceHaltError):
-                    await handle_wrap_tool_call(mock_middleware, mock_tool_request, handler)
-
-                # Should have cleared span processor context on halt
-                mock_middleware._span_processor.clear_activity_context.assert_called_once()
+    started = next(e for e in gate.sent if e.payload.get("event_type") == "ActivityStarted")
+    assert started.payload.get("activity_input") == [{"query": "abc"}]
 
 
-@pytest.mark.asyncio
-async def test_handle_wrap_tool_call_hitl_retry_on_require_approval_from_hook(
-    mock_middleware, mock_tool_request
-):
-    """Retry on require_approval verdict from hook governance."""
-    handler = AsyncMock(return_value="tool result")
+# ─── handle_wrap_tool_call_sync — sync BLOCK never runs the tool (regression) ──
 
-    with patch(
-        "openbox_langchain.middleware_tool_hook._evaluate",
-        new_callable=AsyncMock,
-        return_value=None,
-    ):
-        with patch(
-            "openbox_langchain.middleware_tool_hook._run_with_otel_context",
-            new_callable=AsyncMock,
-            return_value="tool result",
-        ):
-            with patch(
-                "openbox_langchain.middleware_tool_hook._poll_approval_or_halt",
-                new_callable=AsyncMock,
-            ):
-                result = await handle_wrap_tool_call(mock_middleware, mock_tool_request, handler)
 
-    # Should have executed successfully
+def test_handle_wrap_tool_call_sync_block_never_runs_tool():
+    """Sync agent.invoke with BLOCK on ToolStarted never runs the tool body."""
+    gate = block_first_gate()
+    mw = make_mw(gate=gate)
+    turn = make_turn(sync_mode=True)
+    handler = MagicMock(return_value="tool result")
+
+    with pytest.raises(GovernanceBlockedError):
+        handle_wrap_tool_call_sync(mw, turn, make_request(), handler)
+
+    handler.assert_not_called()
+
+
+def test_handle_wrap_tool_call_sync_allow_runs_tool_and_completes():
+    gate = FakeGate()
+    mw = make_mw(gate=gate)
+    turn = make_turn(sync_mode=True)
+    handler = MagicMock(return_value="tool result")
+
+    result = handle_wrap_tool_call_sync(mw, turn, make_request(), handler)
+
     assert result == "tool result"
+    handler.assert_called_once()
+    event_types = [e.payload.get("event_type") for e in gate.sent]
+    assert "ActivityStarted" in event_types
+    assert "ActivityCompleted" in event_types
 
 
-@pytest.mark.asyncio
-async def test_handle_wrap_tool_call_on_non_approval_error(mock_middleware, mock_tool_request):
-    """Send ToolCompleted failed on non-approval error."""
-    handler = AsyncMock(return_value="tool result")
+def test_handle_wrap_tool_call_sync_require_approval_fails_shut():
+    """M15: sync REQUIRE_APPROVAL with no handle_approval_sync fails safe."""
+    from openbox_core.errors import ApprovalRejectedError
 
-    with patch(
-        "openbox_langchain.middleware_tool_hook._evaluate",
-        new_callable=AsyncMock,
-        return_value=None,
-    ):
-        with patch(
-            "openbox_langchain.middleware_tool_hook._run_with_otel_context",
-            new_callable=AsyncMock,
-            return_value="tool result",
-        ):
-            with patch(
-                "openbox_langchain.middleware_tool_hook._send_tool_failed",
-                new_callable=AsyncMock,
-            ) as mock_send_failed:
-                result = await handle_wrap_tool_call(mock_middleware, mock_tool_request, handler)
+    gate = approval_first_gate()
+    mw = make_mw(gate=gate)
+    turn = make_turn(sync_mode=True)
+    handler = MagicMock(return_value="tool result")
 
-                # Should not have called _send_tool_failed (no error)
-                assert mock_send_failed.call_count == 0
-                assert result == "tool result"
+    with pytest.raises(ApprovalRejectedError):
+        handle_wrap_tool_call_sync(mw, turn, make_request(), handler)
+    handler.assert_not_called()
 
 
-@pytest.mark.asyncio
-async def test_handle_wrap_tool_call_includes_tool_args_in_event(
-    mock_middleware, mock_tool_request
-):
-    """Include tool args in ToolStarted event."""
-    handler = AsyncMock(return_value="result")
+def test_handle_wrap_tool_call_sync_tool_body_error_sends_failed_completion():
+    gate = FakeGate()
+    mw = make_mw(gate=gate)
+    turn = make_turn(sync_mode=True)
+    handler = MagicMock(side_effect=RuntimeError("boom"))
 
-    with patch(
-        "openbox_langchain.middleware_tool_hook._evaluate",
-        new_callable=AsyncMock,
-        return_value=None,
-    ) as mock_eval:
-        with patch(
-            "openbox_langchain.middleware_tool_hook._run_with_otel_context",
-            new_callable=AsyncMock,
-            return_value="result",
-        ):
-            await handle_wrap_tool_call(mock_middleware, mock_tool_request, handler)
+    with pytest.raises(RuntimeError, match="boom"):
+        handle_wrap_tool_call_sync(mw, turn, make_request(), handler)
 
-    # Find ToolStarted event
-    events = [call[0][1] for call in mock_eval.call_args_list]
-    tool_started = [e for e in events if e.event_type == "ToolStarted"]
-    assert len(tool_started) > 0
-    assert tool_started[0].tool_name == "search_web"
+    completed = [e for e in gate.sent if e.payload.get("event_type") == "ActivityCompleted"]
+    assert len(completed) == 1
+    assert "boom" in completed[0].payload.get("error", "")
 
 
-@pytest.mark.asyncio
-async def test_handle_wrap_tool_call_skips_tool_start_when_flag_false(
-    mock_middleware, mock_tool_request
-):
-    """Skip ToolStarted when send_tool_start_event is False."""
-    mock_middleware._config.send_tool_start_event = False
+def test_handle_wrap_tool_call_sync_skips_governance_for_excluded_tools():
+    mw = make_mw()
+    mw._options.skip_tool_types = {"internal_tool"}
+    turn = make_turn(sync_mode=True)
+    handler = MagicMock(return_value="result")
 
-    handler = AsyncMock(return_value="result")
+    result = handle_wrap_tool_call_sync(mw, turn, make_request("internal_tool"), handler)
 
-    with patch(
-        "openbox_langchain.middleware_tool_hook._evaluate",
-        new_callable=AsyncMock,
-        return_value=None,
-    ) as mock_eval:
-        with patch(
-            "openbox_langchain.middleware_tool_hook._run_with_otel_context",
-            new_callable=AsyncMock,
-            return_value="result",
-        ):
-            await handle_wrap_tool_call(mock_middleware, mock_tool_request, handler)
-
-    # ToolStarted should not be sent (but ToolCompleted might be)
-    events = [call[0][1] for call in mock_eval.call_args_list]
-    event_types = [e.event_type for e in events]
-    assert "ToolStarted" not in event_types
-
-
-@pytest.mark.asyncio
-async def test_handle_wrap_tool_call_skips_tool_end_when_flag_false(
-    mock_middleware, mock_tool_request
-):
-    """Skip ToolCompleted when send_tool_end_event is False."""
-    mock_middleware._config.send_tool_end_event = False
-
-    handler = AsyncMock(return_value="result")
-
-    with patch(
-        "openbox_langchain.middleware_tool_hook._evaluate",
-        new_callable=AsyncMock,
-        return_value=None,
-    ) as mock_eval:
-        with patch(
-            "openbox_langchain.middleware_tool_hook._run_with_otel_context",
-            new_callable=AsyncMock,
-            return_value="result",
-        ):
-            await handle_wrap_tool_call(mock_middleware, mock_tool_request, handler)
-
-    # ToolCompleted should not be sent
-    events = [call[0][1] for call in mock_eval.call_args_list]
-    event_types = [e.event_type for e in events]
-    assert "ToolCompleted" not in event_types
-
-
-# ─── _send_tool_failed ──────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_send_tool_failed_sends_failed_event(mock_middleware):
-    """Send ToolCompleted with failed status."""
-    with patch(
-        "openbox_langchain.middleware_tool_hook._evaluate",
-        new_callable=AsyncMock,
-    ) as mock_eval:
-        error = RuntimeError("tool error")
-        await _send_tool_failed(
-            mock_middleware,
-            activity_id="act-123",
-            tool_name="search_web",
-            tool_type="http",
-            error=error,
-            duration_ms=100.5,
-        )
-
-    # Should have called _evaluate with ToolCompleted
-    assert mock_eval.call_count == 1
-    event = mock_eval.call_args_list[0][0][1]
-    assert event.event_type == "ToolCompleted"
-    assert event.status == "failed"
-    # activity_output is a dict with error key
-    assert event.activity_output.get("error") == "tool error" or "tool error" in str(
-        event.activity_output
-    )
-
-
-@pytest.mark.asyncio
-async def test_send_tool_failed_clears_span_processor(mock_middleware):
-    """Clear span processor context when sending failed."""
-    mock_middleware._span_processor = MagicMock()
-
-    with patch(
-        "openbox_langchain.middleware_tool_hook._evaluate",
-        new_callable=AsyncMock,
-    ):
-        error = RuntimeError("tool error")
-        await _send_tool_failed(
-            mock_middleware,
-            activity_id="act-123",
-            tool_name="search_web",
-            tool_type="http",
-            error=error,
-            duration_ms=100.5,
-        )
-
-    mock_middleware._span_processor.clear_activity_context.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_send_tool_failed_skips_when_flag_false(mock_middleware):
-    """Skip sending when send_tool_end_event is False."""
-    mock_middleware._config.send_tool_end_event = False
-
-    with patch(
-        "openbox_langchain.middleware_tool_hook._evaluate",
-        new_callable=AsyncMock,
-    ) as mock_eval:
-        error = RuntimeError("tool error")
-        await _send_tool_failed(
-            mock_middleware,
-            activity_id="act-123",
-            tool_name="search_web",
-            tool_type="http",
-            error=error,
-            duration_ms=100.5,
-        )
-
-    # Should not call _evaluate
-    assert mock_eval.call_count == 0
-
-
-@pytest.mark.asyncio
-async def test_send_tool_failed_includes_duration(mock_middleware):
-    """Include duration_ms in ToolCompleted event."""
-    with patch(
-        "openbox_langchain.middleware_tool_hook._evaluate",
-        new_callable=AsyncMock,
-    ) as mock_eval:
-        error = RuntimeError("tool error")
-        await _send_tool_failed(
-            mock_middleware,
-            activity_id="act-123",
-            tool_name="search_web",
-            tool_type="http",
-            error=error,
-            duration_ms=123.45,
-        )
-
-    event = mock_eval.call_args_list[0][0][1]
-    assert event.duration_ms == 123.45
-
-
-@pytest.mark.asyncio
-async def test_send_tool_failed_includes_tool_metadata(mock_middleware):
-    """Include tool_name and tool_type in event."""
-    with patch(
-        "openbox_langchain.middleware_tool_hook._evaluate",
-        new_callable=AsyncMock,
-    ) as mock_eval:
-        error = RuntimeError("tool error")
-        await _send_tool_failed(
-            mock_middleware,
-            activity_id="act-123",
-            tool_name="search_web",
-            tool_type="http",
-            error=error,
-            duration_ms=100.0,
-        )
-
-    event = mock_eval.call_args_list[0][0][1]
-    assert event.tool_name == "search_web"
-    assert event.tool_type == "http"
+    assert mw._runtime.gate.sent == []
+    handler.assert_called_once()
+    assert result == "result"

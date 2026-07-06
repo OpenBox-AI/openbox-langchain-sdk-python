@@ -1,6 +1,6 @@
 # OpenBox LangChain SDK — Python
 
-Governance and observability SDK for LangChain agents. Intercepts agent execution via `AgentMiddleware` to enforce OpenBox policies, guardrails, HITL approval flows, and hook-level governance (HTTP/DB/File I/O).
+LangChain-Core adapter for OpenBox governance. Provides callback handlers that emit tool and LLM lifecycle events to OpenBox Core's policy engine, enabling real-time governance, guardrails, HITL approval flows, and base-SDK hook governance (HTTP/DB/File I/O) for LangChain agents.
 
 ## Installation
 
@@ -36,19 +36,17 @@ result = agent.invoke({"messages": [("user", "your query")]})
 
 ## How It Works
 
-Three-layer governance architecture:
+Two-layer governance architecture:
 
 | Layer | Mechanism | Governs |
 |-------|-----------|---------|
-| 1 | AgentMiddleware hooks | Agent lifecycle (before/after), model calls, tool execution |
-| 2 | Hook Governance | HTTP requests, DB queries, file I/O at kernel boundary |
-| 3 | Activity Context Mapping | Links hook traces to governance activities via OTel |
+| 1 | LangChain-Core Callbacks | Tool and LLM lifecycle emission via `ActivityBridge` |
+| 2 | Base SDK Hook Governance | HTTP requests, DB queries, file I/O at process boundary |
 
-**Middleware hooks:**
-- `before_agent` / `abefore_agent` — Session setup, pre-screen guardrails
-- `wrap_model_call` / `awrap_model_call` — LLM interception, PII redaction
-- `wrap_tool_call` / `awrap_tool_call` — Tool governance, OTel span registration
-- `after_agent` / `aafter_agent` — Session cleanup
+**Core components:**
+- `ActivityBridge` — Ownership channel for tool and LLM events; prevents duplicate governance evaluation
+- `OpenBoxLangChainCoreAsyncCallbackHandler` / `...SyncCallbackHandler` — LangChain-Core callbacks emitting tool and LLM lifecycle events to OpenBox Core
+- AgentMiddleware (for `create_agent`) — Wraps model and tool calls with additional governance context
 
 ## Configuration
 
@@ -62,7 +60,6 @@ middleware = create_openbox_langchain_middleware(
     governance_timeout=30.0,             # HTTP timeout in seconds
     validate=True,                       # Validate API key on startup
     session_id="session-123",            # Optional session tracking
-    sqlalchemy_engine=engine,            # Optional DB governance
     tool_type_map={                      # Optional tool classification
         "search_web": "http",
         "query_db": "database",
@@ -115,19 +112,19 @@ be omitted. Otherwise, provide both values together.
 ## Requirements
 
 - Python 3.11+
-- LangChain >= 0.3.0
-- LangGraph >= 0.2.0
-- openbox-langgraph-sdk-python >= 0.2.0
+- openbox-sdk-python >= 1.0.0
+- langchain-core >= 1.3.3
+- LangChain >= 1.0.0 (required only for `[agent]` extra, which enables `create_agent` middleware)
 
 ## API Reference
 
-**Primary factory:**
-- `create_openbox_langchain_middleware()` — Creates configured middleware
+**LangChain-Core callbacks:**
+- `OpenBoxLangChainCoreAsyncCallbackHandler` — Async callback handler for tool/LLM lifecycle
+- `OpenBoxLangChainCoreSyncCallbackHandler` — Sync callback handler for tool/LLM lifecycle
+- `ActivityBridge` — Ownership channel for lifecycle event deduplication
 
-**Re-exported from langgraph SDK:**
-- `enforce_verdict()` — Enforce verdicts
-- `poll_until_decision()` — HITL approval polling
-- `GovernanceClient`, `GovernanceConfig` — Core types
+**AgentMiddleware (optional):**
+- `create_openbox_langchain_middleware()` — Creates configured middleware for `create_agent`
 
 See `openbox_langchain.__init__.py` for full API export list.
 

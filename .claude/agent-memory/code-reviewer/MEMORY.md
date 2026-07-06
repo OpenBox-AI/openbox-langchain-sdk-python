@@ -1,0 +1,2 @@
+- [C5 approval-identity resolution gotcha](c5-approval-identifier-resolution.md) — `_resolve_identifier` prefers `result.raw["identifier"]` over `ctx.activity_id`; a Core-echoed identifier on a tool lifecycle response can hang the outer HITL poll
+- [Phase 5 LLM ownership dedup contract](phase5-llm-ownership-dedup-contract.md) — shared callback dedups LLM lifecycle via resolve-alias-first; -pre/-c id invariants; C4 no-replay; M18 mapper
