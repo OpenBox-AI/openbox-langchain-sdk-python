@@ -7,6 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from openbox_langchain.middleware import OpenBoxLangChainMiddleware
+from openbox_langchain.sdk_metadata import SDK_ENGINE, SDK_LANGUAGE, SDK_PACKAGE_VERSION
 
 API_URL = "https://test.openbox.ai"
 API_KEY = "obx_test_123"
@@ -34,6 +35,9 @@ def test_factory_creates_middleware():
     create = _import_factory()
     mw = create(api_url=API_URL, api_key=API_KEY, validate=False)
     assert isinstance(mw, OpenBoxLangChainMiddleware)
+    assert mw._runtime.config.sdk_version == SDK_PACKAGE_VERSION
+    assert mw._runtime.config.sdk_engine == SDK_ENGINE
+    assert mw._runtime.config.sdk_language == SDK_LANGUAGE
 
 
 def test_factory_validates_api_key_by_default(_no_validate_by_default):
@@ -41,6 +45,19 @@ def test_factory_validates_api_key_by_default(_no_validate_by_default):
     create = _import_factory()
     create(api_url=API_URL, api_key=API_KEY)
     _no_validate_by_default.assert_called_once()
+
+
+def test_factory_validation_client_uses_langchain_sdk_identifier():
+    """Startup validation sends the LangChain SDK identifier, not base fallback."""
+    create = _import_factory()
+    with patch("openbox_langchain.middleware_factory.EvaluationClient") as client_cls:
+        client_cls.return_value.validate_api_key.return_value = True
+        create(api_url=API_URL, api_key=API_KEY)
+
+    kwargs = client_cls.call_args.kwargs
+    assert kwargs["sdk_version"] == SDK_PACKAGE_VERSION
+    assert kwargs["sdk_engine"] == SDK_ENGINE
+    assert kwargs["sdk_language"] == SDK_LANGUAGE
 
 
 def test_factory_respects_validate_false(_no_validate_by_default):

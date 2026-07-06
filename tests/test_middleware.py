@@ -27,6 +27,7 @@ from openbox_langchain.middleware_turn_state import (
     require_turn_state,
     require_turn_state_from_request,
 )
+from openbox_langchain.sdk_metadata import SDK_ENGINE, SDK_LANGUAGE, SDK_PACKAGE_VERSION
 
 API_URL = "https://test.openbox.ai"
 API_KEY = "obx_test_123"
@@ -52,6 +53,9 @@ def test_construction_builds_own_runtime_and_workflow_type():
         assert mw._workflow_type == "MyAgent"
         assert mw._runtime.config.api_url == API_URL
         assert mw._runtime.config.api_key == API_KEY
+        assert mw._runtime.config.sdk_version == SDK_PACKAGE_VERSION
+        assert mw._runtime.config.sdk_engine == SDK_ENGINE
+        assert mw._runtime.config.sdk_language == SDK_LANGUAGE
     finally:
         mw.close()
 

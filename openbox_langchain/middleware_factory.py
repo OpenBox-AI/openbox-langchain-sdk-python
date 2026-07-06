@@ -29,6 +29,7 @@ from openbox_langchain.middleware import (
     OpenBoxLangChainMiddleware,
     OpenBoxLangChainMiddlewareOptions,
 )
+from openbox_langchain.sdk_metadata import SDK_ENGINE, SDK_LANGUAGE, SDK_PACKAGE_VERSION
 
 
 def create_openbox_langchain_middleware(
@@ -65,6 +66,9 @@ def create_openbox_langchain_middleware(
         api_key=api_key,
         timeout_seconds=governance_timeout,
         agent_name=agent_name,
+        sdk_version=SDK_PACKAGE_VERSION,
+        sdk_engine=SDK_ENGINE,
+        sdk_language=SDK_LANGUAGE,
     )
 
     if validate:
@@ -74,6 +78,9 @@ def create_openbox_langchain_middleware(
             timeout_seconds=config.timeout_seconds,
             on_api_error=config.on_api_error,
             identity=config.load_identity(),
+            sdk_version=config.sdk_version,
+            sdk_engine=config.sdk_engine,
+            sdk_language=config.sdk_language,
         )
         try:
             client.validate_api_key()

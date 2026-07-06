@@ -17,6 +17,8 @@ from openbox_core.config import OpenBoxConfig
 from openbox_core.context import ContextStore
 from openbox_core.runtime import OpenBoxRuntime
 
+from openbox_langchain.sdk_metadata import SDK_ENGINE, SDK_LANGUAGE, SDK_PACKAGE_VERSION
+
 if TYPE_CHECKING:
     from openbox_langchain.middleware import OpenBoxLangChainMiddlewareOptions
 
@@ -37,6 +39,9 @@ def build_middleware_runtime(options: OpenBoxLangChainMiddlewareOptions) -> Open
         on_api_error=options.on_api_error,
         timeout_seconds=options.governance_timeout,
         agent_name=options.agent_name,
+        sdk_version=SDK_PACKAGE_VERSION,
+        sdk_engine=SDK_ENGINE,
+        sdk_language=SDK_LANGUAGE,
     )
 
     approval_poller: ApprovalPoller | None = None
@@ -50,6 +55,9 @@ def build_middleware_runtime(options: OpenBoxLangChainMiddlewareOptions) -> Open
             timeout_seconds=config.timeout_seconds,
             on_api_error=config.on_api_error,
             identity=config.load_identity(),
+            sdk_version=config.sdk_version,
+            sdk_engine=config.sdk_engine,
+            sdk_language=config.sdk_language,
         )
         approval_poller = ApprovalPoller(
             approval_client,
