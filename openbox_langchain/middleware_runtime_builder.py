@@ -41,9 +41,25 @@ def build_middleware_runtime(options: OpenBoxLangChainMiddlewareOptions) -> Open
         agent_name=options.agent_name,
         agent_did=options.agent_did,
         agent_private_key=options.agent_private_key,
+        workload_private_key=options.workload_private_key,
         sdk_version=SDK_PACKAGE_VERSION,
         sdk_engine=SDK_ENGINE,
         sdk_language=SDK_LANGUAGE,
+    )
+
+    # Governance and HITL share one client, including its workload token cache.
+    # The runtime owns this client and closes both transports on aclose().
+    client = EvaluationClient(
+        config.api_url,
+        config.api_key,
+        timeout_seconds=config.timeout_seconds,
+        on_api_error=config.on_api_error,
+        identity=config.load_okta_identity() or config.load_identity(),
+        okta_bootstrap_private_key=config.okta_bootstrap_private_key(),
+        workload_private_key=config.keycloak_workload_private_key(),
+        sdk_version=config.sdk_version,
+        sdk_engine=config.sdk_engine,
+        sdk_language=config.sdk_language,
     )
 
     approval_poller: ApprovalPoller | None = None
@@ -51,23 +67,13 @@ def build_middleware_runtime(options: OpenBoxLangChainMiddlewareOptions) -> Open
         # Only ever driven on the async path (awrap_*) — the sync path never
         # calls handle_approval (M15), so constructing this unconditionally
         # has no fail-shut-vs-real-wait effect on sync runs.
-        approval_client = EvaluationClient(
-            config.api_url,
-            config.api_key,
-            timeout_seconds=config.timeout_seconds,
-            on_api_error=config.on_api_error,
-            identity=config.load_identity(),
-            sdk_version=config.sdk_version,
-            sdk_engine=config.sdk_engine,
-            sdk_language=config.sdk_language,
-        )
         approval_poller = ApprovalPoller(
-            approval_client,
+            client,
             poll_interval_seconds=options.approval_poll_interval_seconds,
             max_wait_seconds=options.approval_max_wait_seconds,
         )
 
     adapter = CoreAdapter(approval_poller=approval_poller)
-    runtime = OpenBoxRuntime(config, adapter, context_store=ContextStore())
+    runtime = OpenBoxRuntime(config, adapter, client=client, context_store=ContextStore())
     runtime.install_instrumentation()
     return runtime

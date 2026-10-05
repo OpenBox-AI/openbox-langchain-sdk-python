@@ -1,0 +1,2 @@
+# Dummy Ed25519 test fixture in the original IAM commit; replaced by a generated key.
+a3bde242ed999062820a4f344fa20f0c17f7e6bd:tests/test_middleware_workload_identity.py:generic-api-key:30

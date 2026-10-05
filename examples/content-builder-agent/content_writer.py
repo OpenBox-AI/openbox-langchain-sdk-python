@@ -269,6 +269,8 @@ def create_content_writer():
     middleware = create_openbox_langchain_middleware(
         api_url=os.environ["OPENBOX_URL"],
         api_key=os.environ["OPENBOX_API_KEY"],
+        # Workload credentials resolve from OPENBOX_LANGCHAIN_WORKLOAD_PRIVATE_KEY
+        # or OPENBOX_WORKLOAD_PRIVATE_KEY through the middleware's base config.
         agent_name=os.environ.get("OPENBOX_AGENT_NAME", "ContentWriter"),
         tool_type_map={"web_search": "http"},
     )
