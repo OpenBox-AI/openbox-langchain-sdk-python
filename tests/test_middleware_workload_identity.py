@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 from collections import Counter
@@ -9,7 +10,7 @@ from collections import Counter
 import httpx
 import pytest
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric import ed25519, rsa
 from openbox_core.client import EvaluationClient
 from openbox_core.errors import OpenBoxAuthError, OpenBoxConfigError, OpenBoxNetworkError
 
@@ -27,7 +28,6 @@ ISSUER = "https://identity.example.test/realms/openbox"
 TOKEN_ENDPOINT = f"{ISSUER}/protocol/openid-connect/token"
 WORKLOAD_HEADER = "X-OpenBox-Workload-Token"
 AGENT_DID = "did:aip:12345678-1234-5678-1234-567812345678"
-AGENT_PRIVATE_KEY = "c2VjcmV0LXNlZWQtc2VjcmV0LXNlZWQtc2VjcmV0ISE="
 
 
 class WorkloadServer:
@@ -97,6 +97,17 @@ def server(monkeypatch):
         "openbox_langchain.middleware_runtime_builder.EvaluationClient", client_with_transport,
     )
     return server
+
+
+@pytest.fixture(scope="module")
+def agent_private_key():
+    key = ed25519.Ed25519PrivateKey.generate()
+    raw_key = key.private_bytes(
+        serialization.Encoding.Raw,
+        serialization.PrivateFormat.Raw,
+        serialization.NoEncryption(),
+    )
+    return base64.b64encode(raw_key).decode("ascii")
 
 
 @pytest.mark.parametrize("entrypoint", ["factory", "options"])
@@ -255,8 +266,8 @@ def test_startup_auth_failure_does_not_downgrade(server, workload_key, failure, 
 
 
 @pytest.mark.parametrize("signed", [False, True])
-def test_existing_v1_identity_routing_is_preserved(server, signed):
-    kwargs = {"agent_did": AGENT_DID, "agent_private_key": AGENT_PRIVATE_KEY} if signed else {}
+def test_existing_v1_identity_routing_is_preserved(server, signed, agent_private_key):
+    kwargs = {"agent_did": AGENT_DID, "agent_private_key": agent_private_key} if signed else {}
     middleware = create_openbox_langchain_middleware(
         api_url=API_URL, api_key=API_KEY, **kwargs,
     )
