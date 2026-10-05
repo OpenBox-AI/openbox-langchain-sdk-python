@@ -16,25 +16,33 @@ The `content_writer.py` script shows how to combine these into a working agent u
 export OPENAI_API_KEY="..."
 export OPENBOX_URL="https://core.openbox.ai"
 export OPENBOX_API_KEY="obx_live_..."
-export OPENBOX_AGENT_DID="did:aip:..."          # Required by default for newly registered agents
-export OPENBOX_AGENT_PRIVATE_KEY="..."          # Required by default for newly registered agents
+export OPENBOX_WORKLOAD_PRIVATE_KEY="$(cat /path/to/workload-private-key.pem)"
 export GOOGLE_API_KEY="..."      # For image generation
 export TAVILY_API_KEY="..."      # For web search (optional)
 
-# Run (uv automatically installs dependencies on first run)
+# Run with this repository's SDK and its published base-SDK dependency
 cd examples/content-builder-agent
-uv run python content_writer.py "Write a blog post about prompt engineering"
+uv run --with-editable ../.. python content_writer.py "Write a blog post about prompt engineering"
 ```
 
 **More examples:**
 ```bash
-uv run python content_writer.py "Create a LinkedIn post about AI agents"
-uv run python content_writer.py "Write a Twitter thread about the future of coding"
+uv run --with-editable ../.. python content_writer.py "Create a LinkedIn post about AI agents"
+uv run --with-editable ../.. python content_writer.py "Write a Twitter thread about the future of coding"
 ```
 
-OpenBox enables DID signing by default for newly registered agents. If signing
-has been explicitly disabled for this agent in OpenBox, you can omit
-`OPENBOX_AGENT_DID` and `OPENBOX_AGENT_PRIVATE_KEY`.
+Use the PKCS8 PEM RSA key associated with the agent's active IAM v3 workload
+identity. The middleware reads `OPENBOX_LANGCHAIN_WORKLOAD_PRIVATE_KEY` before
+`OPENBOX_WORKLOAD_PRIVATE_KEY` and validates the identity at startup. The base SDK
+handles Core bootstrap, Keycloak token exchange, and authenticated v3 requests.
+
+The `--with-editable ../..` option loads the SDK under development from this
+repository. Its `openbox-sdk-python>=1.3.1` dependency comes from PyPI. This makes
+the new middleware configuration available before a LangChain SDK release.
+
+For an existing DID-signed agent, supply `OPENBOX_AGENT_DID` and
+`OPENBOX_AGENT_PRIVATE_KEY` instead. API-key-only agents can omit identity keys
+when their Core configuration permits it.
 
 ## How It Works
 
@@ -69,8 +77,7 @@ skills_text = load_skills(Path("skills/"))
 middleware = create_openbox_langchain_middleware(
     api_url=os.environ["OPENBOX_URL"],
     api_key=os.environ["OPENBOX_API_KEY"],
-    agent_did=os.environ.get("OPENBOX_AGENT_DID"),
-    agent_private_key=os.environ.get("OPENBOX_AGENT_PRIVATE_KEY"),
+    # Workload credentials are resolved from the environment.
     agent_name="ContentWriter",
 )
 
@@ -151,5 +158,6 @@ editor:
 - Python 3.11+
 - `OPENAI_API_KEY` - For the main agent (GPT-4o-mini)
 - `OPENBOX_URL` + `OPENBOX_API_KEY` - For OpenBox governance
+- `OPENBOX_WORKLOAD_PRIVATE_KEY` - PKCS8 PEM RSA key for IAM v3 workload authentication
 - `GOOGLE_API_KEY` - For image generation (Gemini's Imagen)
 - `TAVILY_API_KEY` - For web search (optional, research still works without it)

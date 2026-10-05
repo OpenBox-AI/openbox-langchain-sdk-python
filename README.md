@@ -5,7 +5,7 @@ LangChain-Core adapter for OpenBox governance. Provides callback handlers that e
 ## Installation
 
 ```bash
-pip install openbox-langchain-sdk-python
+pip install "openbox-langchain-sdk-python[agent]"
 ```
 
 ## Quick Start
@@ -18,8 +18,7 @@ from openbox_langchain import create_openbox_langchain_middleware
 middleware = create_openbox_langchain_middleware(
     api_url="https://core.openbox.ai",
     api_key="obx_live_...",
-    agent_did="did:aip:...",
-    agent_private_key="...",
+    workload_private_key="...",  # PKCS8 PEM RSA key for this agent's workload identity
     agent_name="MyAgent",
 )
 
@@ -54,8 +53,7 @@ Two-layer governance architecture:
 middleware = create_openbox_langchain_middleware(
     api_url="https://core.openbox.ai",  # OpenBox Core URL
     api_key="obx_live_...",              # API key (obx_live_* or obx_test_*)
-    agent_did="did:aip:...",             # Required by default; can use OPENBOX_AGENT_DID
-    agent_private_key="...",             # Required by default; can use OPENBOX_AGENT_PRIVATE_KEY
+    workload_private_key="...",         # IAM v3 key; can use OPENBOX_WORKLOAD_PRIVATE_KEY
     agent_name="MyAgent",                # Agent name (from dashboard)
     governance_timeout=30.0,             # HTTP timeout in seconds
     validate=True,                       # Validate API key on startup
@@ -67,33 +65,51 @@ middleware = create_openbox_langchain_middleware(
 )
 ```
 
-## Agent Identity and DID Signing
+## IAM v3 Workload Identity
 
-OpenBox issues each registered agent a decentralized identifier (DID) and
-private key. DID signing is enabled by default for newly registered agents. The
-OpenBox UI returns both values when the agent is created. Pass them to the
-middleware so governance events are signed and attributable to that agent.
+Supply the PKCS8 PEM RSA private key associated with the agent's active Keycloak
+service account. This works for OpenBox-, Okta-, and Entra-managed workload
+identities. The base SDK fetches the active identity metadata from Core, exchanges
+a signed `private_key_jwt` for a short-lived Keycloak token, and sends the API key
+plus `X-OpenBox-Workload-Token` on v3 validation, governance, and approval requests.
 
-You can provide them directly:
+You can pass the key directly or use environment variables:
 
 ```python
+import os
+
 middleware = create_openbox_langchain_middleware(
-    api_url="https://core.openbox.ai",
-    api_key="obx_live_...",
-    agent_did="did:aip:...",
-    agent_private_key="...",
+    api_url=os.environ["OPENBOX_URL"],
+    api_key=os.environ["OPENBOX_API_KEY"],
+    workload_private_key=os.environ["OPENBOX_WORKLOAD_PRIVATE_KEY"],
 )
 ```
 
-Or set them through the environment:
+If the argument is omitted, the key is resolved in this order:
 
-```bash
-export OPENBOX_AGENT_DID="did:aip:..."
-export OPENBOX_AGENT_PRIVATE_KEY="..."
-```
+1. `OPENBOX_LANGCHAIN_WORKLOAD_PRIVATE_KEY`
+2. `OPENBOX_WORKLOAD_PRIVATE_KEY`
 
-If DID signing is explicitly disabled for the agent in OpenBox, these values can
-be omitted. Otherwise, provide both values together.
+The variable contains the PEM key text. The base SDK also supports existing Okta
+agents' `OPENBOX_OKTA_AGENT_PRIVATE_KEY` as a workload-key fallback. Core supplies
+the issuer, token endpoint, client ID, and active authority metadata.
+
+Startup validation is enabled by default. `validate=False` defers authentication
+until the first governed request. Governance and human-approval polling share one
+client and token cache. Use `middleware.close()` after synchronous runs or
+`await middleware.aclose()` after asynchronous runs to release resources.
+
+Authentication failures propagate even with `on_api_error="fail_open"`. The base
+SDK preserves legacy routing only when Core explicitly reports no v3 authority
+(bootstrap HTTP 404, or HTTP 409 with `workload_identity_unavailable`); other
+bootstrap or token failures do not fall back to a legacy request.
+
+### Legacy identities
+
+Existing DID-signed agents can continue supplying `agent_did` and
+`agent_private_key`, or `OPENBOX_AGENT_DID` and `OPENBOX_AGENT_PRIVATE_KEY`.
+API-key-only agents can omit identity keys when their Core configuration permits
+it. An Ed25519 DID key and an RSA workload key are different credentials.
 
 ## Supported Agent Types
 
@@ -112,7 +128,7 @@ be omitted. Otherwise, provide both values together.
 ## Requirements
 
 - Python 3.11+
-- openbox-sdk-python >= 1.0.0
+- openbox-sdk-python >= 1.3.1
 - langchain-core >= 1.3.3
 - LangChain >= 1.0.0 (required only for `[agent]` extra, which enables `create_agent` middleware)
 
