@@ -12,8 +12,11 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from langchain_core.messages import ToolMessage
 from openbox_core.context import activity_scope
 from openbox_core.contracts.context import ActivityContext
+from openbox_core.contracts.results import Verdict
+from openbox_core.errors import GovernanceBlockedError
 from openbox_core.serialization import to_json_safe
 
 from openbox_langchain.lifecycle_events import build_activity_completed, build_activity_started
@@ -88,6 +91,8 @@ async def handle_wrap_tool_call(
             await enforce_start_verdict_async(mw, response)
         except Exception as exc:
             await _close_orphan_start_async(mw, turn, activity_id, tool_name, str(exc))
+            if isinstance(exc, GovernanceBlockedError) and exc.verdict is Verdict.BLOCK:
+                return _blocked_tool_message(request)
             raise
 
     try:
@@ -95,6 +100,8 @@ async def handle_wrap_tool_call(
             tool_result = await handler(request)
     except Exception as exc:
         await _send_tool_failed_async(mw, turn, activity_id, tool_name, exc)
+        if isinstance(exc, GovernanceBlockedError) and exc.verdict is Verdict.BLOCK:
+            return _blocked_tool_message(request)
         raise
 
     if mw._options.send_tool_end_event:
@@ -125,6 +132,8 @@ def handle_wrap_tool_call_sync(
             enforce_start_verdict_sync(mw, response)
         except Exception as exc:
             _close_orphan_start_sync(mw, turn, activity_id, tool_name, str(exc))
+            if isinstance(exc, GovernanceBlockedError) and exc.verdict is Verdict.BLOCK:
+                return _blocked_tool_message(request)
             raise
 
     try:
@@ -132,6 +141,8 @@ def handle_wrap_tool_call_sync(
             tool_result = handler(request)
     except Exception as exc:
         _send_tool_failed_sync(mw, turn, activity_id, tool_name, exc)
+        if isinstance(exc, GovernanceBlockedError) and exc.verdict is Verdict.BLOCK:
+            return _blocked_tool_message(request)
         raise
 
     if mw._options.send_tool_end_event:
@@ -186,4 +197,14 @@ def _send_tool_failed_sync(
         return
     evaluate_lifecycle_sync(
         mw, _build_tool_completed(mw, turn, activity_id, tool_name, error=str(error))
+    )
+
+
+def _blocked_tool_message(request: Any) -> ToolMessage:
+    """Keep the tool-call protocol intact without exposing policy internals."""
+    return ToolMessage(
+        content="This action was blocked by policy. Choose a permitted alternative.",
+        tool_call_id=request.tool_call["id"],
+        name=request.tool_call["name"],
+        status="error",
     )
