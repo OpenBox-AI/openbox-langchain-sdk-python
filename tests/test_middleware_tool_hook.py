@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from openbox_core.errors import GovernanceBlockedError, GovernanceHaltError
+from openbox_core.errors import GovernanceHaltError
 
 from openbox_langchain.middleware_tool_hook import handle_wrap_tool_call, handle_wrap_tool_call_sync
 from openbox_langchain.middleware_turn_state import MiddlewareTurnState
@@ -41,7 +41,7 @@ def make_turn(*, sync_mode: bool = False) -> MiddlewareTurnState:
 
 def make_request(name: str = "search_web", args: dict | None = None) -> MagicMock:
     request = MagicMock()
-    request.tool_call = {"name": name, "args": args or {"query": "test"}}
+    request.tool_call = {"name": name, "args": args or {"query": "test"}, "id": "call_test"}
     return request
 
 
@@ -109,14 +109,15 @@ async def test_handle_wrap_tool_call_completion_reuses_start_id_no_suffix():
     assert not (completed.activity_id or "").endswith("-c")
 
 
-async def test_handle_wrap_tool_call_block_prevents_body_and_raises():
+async def test_handle_wrap_tool_call_block_prevents_body_and_returns_error():
     gate = block_first_gate()
     mw = make_mw(gate=gate)
     turn = make_turn()
     handler = AsyncMock(return_value="tool result")
 
-    with pytest.raises(GovernanceBlockedError):
-        await handle_wrap_tool_call(mw, turn, make_request(), handler)
+    result = await handle_wrap_tool_call(mw, turn, make_request(), handler)
+    assert result.status == "error"
+    assert result.tool_call_id == "call_test"
 
     handler.assert_not_awaited()
 
@@ -134,14 +135,15 @@ async def test_handle_wrap_tool_call_halt_prevents_body_and_raises():
 
 
 async def test_handle_wrap_tool_call_block_closes_orphan_start_same_id():
-    """C6: a stop-shaped ToolStarted closes its own row (same id) before raising."""
+    """A blocked ToolStarted closes its own row before returning the error result."""
     gate = block_first_gate()
     mw = make_mw(gate=gate)
     turn = make_turn()
     handler = AsyncMock(return_value="tool result")
 
-    with pytest.raises(GovernanceBlockedError):
-        await handle_wrap_tool_call(mw, turn, make_request(), handler)
+    result = await handle_wrap_tool_call(mw, turn, make_request(), handler)
+    assert result.status == "error"
+    assert result.tool_call_id == "call_test"
 
     started = [e for e in gate.sent if e.payload.get("event_type") == "ActivityStarted"]
     completed = [e for e in gate.sent if e.payload.get("event_type") == "ActivityCompleted"]
@@ -252,8 +254,9 @@ def test_handle_wrap_tool_call_sync_block_never_runs_tool():
     turn = make_turn(sync_mode=True)
     handler = MagicMock(return_value="tool result")
 
-    with pytest.raises(GovernanceBlockedError):
-        handle_wrap_tool_call_sync(mw, turn, make_request(), handler)
+    result = handle_wrap_tool_call_sync(mw, turn, make_request(), handler)
+    assert result.status == "error"
+    assert result.tool_call_id == "call_test"
 
     handler.assert_not_called()
 

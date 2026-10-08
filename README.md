@@ -122,8 +122,16 @@ it. An Ed25519 DID key and an RSA workload key are different credentials.
 - **ALLOW** — Request permitted
 - **CONSTRAIN** — Request constrained (e.g., rate limit)
 - **REQUIRE_APPROVAL** — Human approval required (HITL polling)
-- **BLOCK** — Request blocked with error
-- **HALT** — Entire workflow halted (unrecoverable error)
+- **BLOCK** — In tool middleware, return an error `ToolMessage` and let the agent continue;
+  the blocked tool or operation does not execute. BLOCK raised by a governed operation
+  inside a tool ends that tool call, without undoing earlier side effects.
+- **HALT** — Stop the current graph run with a governance error.
+
+Tool BLOCK continuation applies to both `invoke` and `ainvoke` with the middleware.
+Model/workflow BLOCK enforcement and standalone callback handlers still raise errors.
+Completion events remain telemetry-only; a verdict received after execution cannot
+undo an action. Custom tool error handlers must preserve governance exceptions for
+the middleware to distinguish BLOCK from HALT.
 
 ## Requirements
 
