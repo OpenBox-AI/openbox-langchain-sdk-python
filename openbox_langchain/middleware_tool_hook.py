@@ -22,6 +22,7 @@ from openbox_langchain.middleware_hooks import (
     enforce_start_verdict_sync,
     evaluate_lifecycle_async,
     evaluate_lifecycle_sync,
+    note_completion_verdict,
 )
 
 if TYPE_CHECKING:
@@ -85,7 +86,7 @@ async def handle_wrap_tool_call(
             mw, _build_tool_started(mw, turn, activity_id, tool_name, tool_args)
         )
         try:
-            await enforce_start_verdict_async(mw, response)
+            await enforce_start_verdict_async(mw, response, ctx)
         except Exception as exc:
             await _close_orphan_start_async(mw, turn, activity_id, tool_name, str(exc))
             raise
@@ -98,9 +99,10 @@ async def handle_wrap_tool_call(
         raise
 
     if mw._options.send_tool_end_event:
-        await evaluate_lifecycle_async(
+        completed = await evaluate_lifecycle_async(
             mw, _build_tool_completed(mw, turn, activity_id, tool_name, result=tool_result)
         )
+        note_completion_verdict(completed, tool_name)
     return tool_result
 
 
@@ -122,7 +124,7 @@ def handle_wrap_tool_call_sync(
             mw, _build_tool_started(mw, turn, activity_id, tool_name, tool_args)
         )
         try:
-            enforce_start_verdict_sync(mw, response)
+            enforce_start_verdict_sync(mw, response, ctx)
         except Exception as exc:
             _close_orphan_start_sync(mw, turn, activity_id, tool_name, str(exc))
             raise
@@ -135,9 +137,10 @@ def handle_wrap_tool_call_sync(
         raise
 
     if mw._options.send_tool_end_event:
-        evaluate_lifecycle_sync(
+        completed = evaluate_lifecycle_sync(
             mw, _build_tool_completed(mw, turn, activity_id, tool_name, result=tool_result)
         )
+        note_completion_verdict(completed, tool_name)
     return tool_result
 
 

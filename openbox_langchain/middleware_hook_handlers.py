@@ -7,6 +7,7 @@ lines per file).
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from openbox_langchain.lifecycle_events import build_activity_started
@@ -20,10 +21,13 @@ from openbox_langchain.middleware_hooks import (
     evaluate_lifecycle_sync,
     extract_last_user_message,
 )
+from openbox_langchain.middleware_llm_logic import llm_activity_context
 
 if TYPE_CHECKING:
     from openbox_langchain.middleware import OpenBoxLangChainMiddleware
     from openbox_langchain.middleware_turn_state import MiddlewareTurnState
+
+_logger = logging.getLogger(__name__)
 
 __all__ = [
     "handle_after_agent",
@@ -67,7 +71,7 @@ def _build_pre_screen_envelope(
 async def handle_before_agent(
     mw: OpenBoxLangChainMiddleware, turn: MiddlewareTurnState, state: Any, runtime: Any,
 ) -> MiddlewareTurnState:
-    """Async before_agent: SignalReceived + WorkflowStarted + pre-screen guardrails.
+    """Async before_agent: WorkflowStarted + SignalReceived + pre-screen guardrails.
 
     Returns the (possibly pre-screen-carrying) ``turn`` — ``MiddlewareTurnState``
     is frozen, so the caller (``middleware.py``) returns THIS value as the
@@ -75,20 +79,29 @@ async def handle_before_agent(
     """
     user_prompt = extract_last_user_message(_state_messages(state))
 
-    if user_prompt:
-        await evaluate_lifecycle_async(mw, build_signal_received_envelope(mw, turn, user_prompt))
+    # WorkflowStarted first: Core creates the session from it and holds any
+    # other event for the run (SessionNotReady) until that session exists.
     if mw._options.send_chain_start_event:
         await evaluate_lifecycle_async(mw, build_workflow_started_envelope(mw, turn, state))
+    if user_prompt:
+        await evaluate_lifecycle_async(mw, build_signal_received_envelope(mw, turn, user_prompt))
 
     if mw._options.send_llm_start_event and user_prompt and user_prompt.strip():
         pre_screen = _build_pre_screen_envelope(mw, turn, user_prompt)
         response = await evaluate_lifecycle_async(mw, pre_screen)
         try:
-            await enforce_start_verdict_async(mw, response)
+            await enforce_start_verdict_async(
+                mw, response, llm_activity_context(mw, turn, pre_screen.activity_id)
+            )
         except Exception as enforcement_error:
             if mw._options.send_chain_end_event:
                 failed = build_workflow_completed_envelope(mw, turn, error=str(enforcement_error))
-                await evaluate_lifecycle_async(mw, failed)
+                # Best effort: a HALT has already closed the session on Core,
+                # which rejects this event — that must not replace the verdict.
+                try:
+                    await evaluate_lifecycle_async(mw, failed)
+                except Exception:
+                    _logger.debug("closing event after pre-screen stop failed", exc_info=True)
             raise
         turn = turn.with_pre_screen(response)
     return turn
@@ -104,20 +117,29 @@ def handle_before_agent_sync(
     """
     user_prompt = extract_last_user_message(_state_messages(state))
 
-    if user_prompt:
-        evaluate_lifecycle_sync(mw, build_signal_received_envelope(mw, turn, user_prompt))
+    # WorkflowStarted first: Core creates the session from it and holds any
+    # other event for the run (SessionNotReady) until that session exists.
     if mw._options.send_chain_start_event:
         evaluate_lifecycle_sync(mw, build_workflow_started_envelope(mw, turn, state))
+    if user_prompt:
+        evaluate_lifecycle_sync(mw, build_signal_received_envelope(mw, turn, user_prompt))
 
     if mw._options.send_llm_start_event and user_prompt and user_prompt.strip():
         pre_screen = _build_pre_screen_envelope(mw, turn, user_prompt)
         response = evaluate_lifecycle_sync(mw, pre_screen)
         try:
-            enforce_start_verdict_sync(mw, response)
+            enforce_start_verdict_sync(
+                mw, response, llm_activity_context(mw, turn, pre_screen.activity_id)
+            )
         except Exception as enforcement_error:
             if mw._options.send_chain_end_event:
                 failed = build_workflow_completed_envelope(mw, turn, error=str(enforcement_error))
-                evaluate_lifecycle_sync(mw, failed)
+                # Best effort: a HALT has already closed the session on Core,
+                # which rejects this event — that must not replace the verdict.
+                try:
+                    evaluate_lifecycle_sync(mw, failed)
+                except Exception:
+                    _logger.debug("closing event after pre-screen stop failed", exc_info=True)
             raise
         turn = turn.with_pre_screen(response)
     return turn

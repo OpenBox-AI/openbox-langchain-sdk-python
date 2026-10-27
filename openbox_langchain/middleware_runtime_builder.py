@@ -10,13 +10,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from openbox_core.adapters.base import CoreAdapter
 from openbox_core.approvals import ApprovalPoller
 from openbox_core.client import EvaluationClient
 from openbox_core.config import OpenBoxConfig
 from openbox_core.context import ContextStore
 from openbox_core.runtime import OpenBoxRuntime
 
+from openbox_langchain.middleware_approval_adapter import LangChainCoreAdapter
 from openbox_langchain.sdk_metadata import SDK_ENGINE, SDK_LANGUAGE, SDK_PACKAGE_VERSION
 
 if TYPE_CHECKING:
@@ -41,6 +41,7 @@ def build_middleware_runtime(options: OpenBoxLangChainMiddlewareOptions) -> Open
         agent_name=options.agent_name,
         agent_did=options.agent_did,
         agent_private_key=options.agent_private_key,
+        workload_private_key=options.workload_private_key,
         sdk_version=SDK_PACKAGE_VERSION,
         sdk_engine=SDK_ENGINE,
         sdk_language=SDK_LANGUAGE,
@@ -48,15 +49,15 @@ def build_middleware_runtime(options: OpenBoxLangChainMiddlewareOptions) -> Open
 
     approval_poller: ApprovalPoller | None = None
     if config.hitl.enabled:
-        # Only ever driven on the async path (awrap_*) — the sync path never
-        # calls handle_approval (M15), so constructing this unconditionally
-        # has no fail-shut-vs-real-wait effect on sync runs.
+        # Drives the approval wait on both paths: awaited on the async hooks,
+        # blocking (LangChainCoreAdapter.wait_for_approval_sync) on the sync ones.
         approval_client = EvaluationClient(
             config.api_url,
             config.api_key,
             timeout_seconds=config.timeout_seconds,
             on_api_error=config.on_api_error,
             identity=config.load_identity(),
+            workload_private_key=config.keycloak_workload_private_key(),
             sdk_version=config.sdk_version,
             sdk_engine=config.sdk_engine,
             sdk_language=config.sdk_language,
@@ -67,7 +68,7 @@ def build_middleware_runtime(options: OpenBoxLangChainMiddlewareOptions) -> Open
             max_wait_seconds=options.approval_max_wait_seconds,
         )
 
-    adapter = CoreAdapter(approval_poller=approval_poller)
+    adapter = LangChainCoreAdapter(approval_poller=approval_poller)
     runtime = OpenBoxRuntime(config, adapter, context_store=ContextStore())
     runtime.install_instrumentation()
     return runtime

@@ -13,8 +13,10 @@ re-exported here for a single hook-helpers import surface).
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
+from openbox_core.adapters.base import adapter_accepts_context
 from openbox_core.contracts.events import (
     EventEnvelope,
     signal_received,
@@ -30,10 +32,13 @@ from openbox_langchain.middleware_message_extraction import (
 )
 
 if TYPE_CHECKING:
+    from openbox_core.contracts.context import ActivityContext
     from openbox_core.contracts.results import EvaluationResult
 
     from openbox_langchain.middleware import OpenBoxLangChainMiddleware
     from openbox_langchain.middleware_turn_state import MiddlewareTurnState
+
+_logger = logging.getLogger(__name__)
 
 __all__ = [
     "build_signal_received_envelope",
@@ -45,6 +50,7 @@ __all__ = [
     "evaluate_lifecycle_sync",
     "extract_last_user_message",
     "extract_response_metadata",
+    "note_completion_verdict",
 ]
 
 
@@ -125,6 +131,21 @@ async def evaluate_lifecycle_async(
     return await mw._runtime.gate.aevaluate(event)
 
 
+def note_completion_verdict(result: EvaluationResult, activity_type: str) -> None:
+    """Log a REQUIRE_APPROVAL that arrives on ActivityCompleted.
+
+    The tool/LLM call already ran, so there is nothing left to gate: the run
+    continues without waiting, as in the LangGraph and Temporal SDKs.
+    """
+    if result.verdict.requires_approval():
+        _logger.warning(
+            "REQUIRE_APPROVAL returned after %s completed; continuing without "
+            "waiting. Match the rule on ActivityStarted to gate the operation.%s",
+            activity_type,
+            f" Reason: {result.reason}" if result.reason else "",
+        )
+
+
 def evaluate_lifecycle_sync(
     mw: OpenBoxLangChainMiddleware, event: EventEnvelope
 ) -> EvaluationResult:
@@ -136,31 +157,41 @@ def evaluate_lifecycle_sync(
 
 
 async def enforce_start_verdict_async(
-    mw: OpenBoxLangChainMiddleware, result: EvaluationResult
+    mw: OpenBoxLangChainMiddleware,
+    result: EvaluationResult,
+    context: ActivityContext | None = None,
 ) -> None:
     """Enforce a start-stage verdict on the ASYNC path.
 
     BLOCK/HALT raise via ``adapter.raise_lifecycle_blocked`` (native core
     error types). REQUIRE_APPROVAL drives ``adapter.handle_approval`` — a real
     wait when an ``ApprovalPoller`` is configured, else fail-safe rejection.
+    ``context`` is the activity awaiting approval: Core's verdict does not echo
+    the workflow/run/activity ids the approval is polled by.
     """
     if result.verdict.should_stop():
         mw._runtime.adapter.raise_lifecycle_blocked(result)
         return
     if result.verdict.requires_approval():
-        await mw._runtime.adapter.handle_approval(result)
+        handle_approval = mw._runtime.adapter.handle_approval
+        if context is not None and adapter_accepts_context(handle_approval):
+            await handle_approval(result, context=context)
+        else:
+            await handle_approval(result)
 
 
-def enforce_start_verdict_sync(mw: OpenBoxLangChainMiddleware, result: EvaluationResult) -> None:
+def enforce_start_verdict_sync(
+    mw: OpenBoxLangChainMiddleware,
+    result: EvaluationResult,
+    context: ActivityContext | None = None,
+) -> None:
     """Enforce a start-stage verdict on the SYNC path.
 
-    BLOCK/HALT raise the same way as the async path. REQUIRE_APPROVAL is
-    FAIL-SHUT (M15, documented — not a real wait): the base ``CoreAdapter``
-    has no working ``handle_approval_sync`` (only a ``getattr`` probe exists
-    for adapters that choose to implement one), and the sync gate path never
-    drives the poller. A sync agent (``agent.invoke``) with a REQUIRE_APPROVAL
-    verdict therefore always rejects — the operation never runs. Use the async
-    entrypoints (``agent.ainvoke``) for a real HITL wait.
+    BLOCK/HALT raise the same way as the async path. REQUIRE_APPROVAL blocks
+    until the approval is decided (``LangChainCoreAdapter``), so a decision on
+    the dashboard takes effect for ``agent.invoke`` too. It fails safe — the
+    operation does not run — without an approval poller, without ``context``
+    (the ids the approval is polled by), or on a running event loop.
     """
     if result.verdict.should_stop():
         mw._runtime.adapter.raise_lifecycle_blocked(result)
@@ -169,6 +200,10 @@ def enforce_start_verdict_sync(mw: OpenBoxLangChainMiddleware, result: Evaluatio
         handle_approval_sync = getattr(mw._runtime.adapter, "handle_approval_sync", None)
         if callable(handle_approval_sync):
             handle_approval_sync(result)
+            return
+        wait_for_approval_sync = getattr(mw._runtime.adapter, "wait_for_approval_sync", None)
+        if callable(wait_for_approval_sync):
+            wait_for_approval_sync(result, context)
             return
         raise ApprovalRejectedError(
             "REQUIRE_APPROVAL verdict on the sync middleware path but the adapter "
