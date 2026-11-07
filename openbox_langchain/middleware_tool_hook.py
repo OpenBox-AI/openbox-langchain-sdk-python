@@ -14,8 +14,18 @@ from typing import TYPE_CHECKING, Any
 
 from openbox_core.context import activity_scope
 from openbox_core.contracts.context import ActivityContext
+from openbox_core.contracts.results import Verdict
 from openbox_core.serialization import to_json_safe
 
+from openbox_langchain.exposure import (
+    barrier_refusal_text,
+    bound,
+    declare,
+    declaring,
+    reporting,
+    resolve_exposure,
+    returned_resources,
+)
 from openbox_langchain.lifecycle_events import build_activity_completed, build_activity_started
 from openbox_langchain.middleware_hooks import (
     enforce_start_verdict_async,
@@ -79,28 +89,38 @@ async def handle_wrap_tool_call(
 
     activity_id = str(uuid.uuid4())
     ctx = _tool_call_context(mw, turn, activity_id, tool_name)
+    tool = getattr(request, "tool", None)
+    exposure = resolve_exposure(mw._options.tool_exposure, tool_name, tool)
+    call = declare(exposure, tool_args) if exposure is not None else None
 
     if mw._options.send_tool_start_event:
-        response = await evaluate_lifecycle_async(
-            mw, _build_tool_started(mw, turn, activity_id, tool_name, tool_args)
-        )
+        with declaring(call):
+            response = await evaluate_lifecycle_async(
+                mw, _build_tool_started(mw, turn, activity_id, tool_name, tool_args)
+            )
         try:
             await enforce_start_verdict_async(mw, response)
         except Exception as exc:
             await _close_orphan_start_async(mw, turn, activity_id, tool_name, str(exc))
             raise
+        if call is not None:
+            call.verdict_token = response.verdict_token
 
     try:
-        with activity_scope(ctx, store=mw._runtime.context_store):
+        with activity_scope(ctx, store=mw._runtime.context_store), bound(call):
             tool_result = await handler(request)
     except Exception as exc:
         await _send_tool_failed_async(mw, turn, activity_id, tool_name, exc)
         raise
 
-    if mw._options.send_tool_end_event:
-        await evaluate_lifecycle_async(
-            mw, _build_tool_completed(mw, turn, activity_id, tool_name, result=tool_result)
-        )
+    returned = returned_resources(exposure, call, tool_result)
+    if mw._options.send_tool_end_event or returned:
+        with reporting(call, returned):
+            completed = await evaluate_lifecycle_async(
+                mw, _build_tool_completed(mw, turn, activity_id, tool_name, result=tool_result)
+            )
+        if returned:
+            return _admit(mw, request, tool_name, completed, tool_result)
     return tool_result
 
 
@@ -116,29 +136,58 @@ def handle_wrap_tool_call_sync(
 
     activity_id = str(uuid.uuid4())
     ctx = _tool_call_context(mw, turn, activity_id, tool_name)
+    tool = getattr(request, "tool", None)
+    exposure = resolve_exposure(mw._options.tool_exposure, tool_name, tool)
+    call = declare(exposure, tool_args) if exposure is not None else None
 
     if mw._options.send_tool_start_event:
-        response = evaluate_lifecycle_sync(
-            mw, _build_tool_started(mw, turn, activity_id, tool_name, tool_args)
-        )
+        with declaring(call):
+            response = evaluate_lifecycle_sync(
+                mw, _build_tool_started(mw, turn, activity_id, tool_name, tool_args)
+            )
         try:
             enforce_start_verdict_sync(mw, response)
         except Exception as exc:
             _close_orphan_start_sync(mw, turn, activity_id, tool_name, str(exc))
             raise
+        if call is not None:
+            call.verdict_token = response.verdict_token
 
     try:
-        with activity_scope(ctx, store=mw._runtime.context_store):
+        with activity_scope(ctx, store=mw._runtime.context_store), bound(call):
             tool_result = handler(request)
     except Exception as exc:
         _send_tool_failed_sync(mw, turn, activity_id, tool_name, exc)
         raise
 
-    if mw._options.send_tool_end_event:
-        evaluate_lifecycle_sync(
-            mw, _build_tool_completed(mw, turn, activity_id, tool_name, result=tool_result)
-        )
+    returned = returned_resources(exposure, call, tool_result)
+    if mw._options.send_tool_end_event or returned:
+        with reporting(call, returned):
+            completed = evaluate_lifecycle_sync(
+                mw, _build_tool_completed(mw, turn, activity_id, tool_name, result=tool_result)
+            )
+        if returned:
+            return _admit(mw, request, tool_name, completed, tool_result)
     return tool_result
+
+
+def _admit(
+    mw: OpenBoxLangChainMiddleware, request: Any, tool_name: str, completed: Any, tool_result: Any,
+) -> Any:
+    """Apply the admission check to what the tool returned. A BLOCK replaces
+    the result with a refusal, so refused objects never reach the model; a
+    HALT stops the run. The refusal names no labels or rules."""
+    verdict = completed.verdict
+    if not verdict.should_stop():
+        return tool_result
+    if verdict is Verdict.HALT:
+        mw._runtime.adapter.raise_lifecycle_blocked(completed)
+    from langchain_core.messages import ToolMessage
+
+    return ToolMessage(
+        content=barrier_refusal_text(completed), tool_call_id=request.tool_call.get("id") or "",
+        name=tool_name, status="error",
+    )
 
 
 # ─── Failure-path completions (orphan close + tool-body error) ─────────────

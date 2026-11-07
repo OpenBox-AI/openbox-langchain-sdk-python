@@ -22,6 +22,14 @@ from openbox_langchain.core_callback import (
     OpenBoxLangChainCoreCallbackOptions,
     OpenBoxLangChainCoreSyncCallbackHandler,
 )
+from openbox_langchain.exposure import (
+    ToolCallGrant,
+    ToolExposure,
+    current_tool_call,
+    current_verdict_token,
+    exposure_tool,
+    report_returned,
+)
 
 try:
     __version__ = version("openbox-langchain-sdk-python")
@@ -77,6 +85,12 @@ __all__ = [
     "OpenBoxLangChainCoreSyncCallbackHandler",
     "OpenBoxLangChainMiddleware",
     "OpenBoxLangChainMiddlewareOptions",
+    "ToolCallGrant",
+    "ToolExposure",
     "__version__",
     "create_openbox_langchain_middleware",
+    "current_tool_call",
+    "current_verdict_token",
+    "exposure_tool",
+    "report_returned",
 ]

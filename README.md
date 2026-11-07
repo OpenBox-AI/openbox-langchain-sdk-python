@@ -109,10 +109,58 @@ be omitted. Otherwise, provide both values together.
 - **BLOCK** — Request blocked with error
 - **HALT** — Entire workflow halted (unrecoverable error)
 
+## Exposure Barriers
+
+Whole-run state needs nothing from this package: run the agent inside the base
+SDK's `exposure_scope(...)` and every event carries the scope, purpose and
+instance. What a single tool call touches has to be declared here, because the
+tool's start event is checked before the tool body runs:
+
+```python
+import json
+from openbox_core import Participant, exposure_scope, relay_via_executor
+from openbox_langchain import ToolExposure, current_verdict_token, exposure_tool
+
+def search_docs(q: str) -> str:
+    body = json.dumps({"q": q}, sort_keys=True)
+    # The Executor checks the token, narrows the query and runs the admission
+    # check on what comes back before returning it.
+    resp = relay_via_executor(EXECUTOR_URL, "dms:main", body, [DMS], current_verdict_token())
+    return render(resp.json())
+
+search = exposure_tool(
+    StructuredTool.from_function(search_docs),
+    ToolExposure(
+        action_class="retrieve",
+        participants=[DMS],
+        payload=lambda args: json.dumps(args, sort_keys=True),
+    ),
+)
+
+with exposure_scope("matter:coke-2026", purpose="pricing_review"):
+    agent.invoke(...)
+```
+
+- **Before the call**, the action class, resources, participants and payload
+  hash go on the tool's start event. Tools can also be declared by name with
+  `tool_exposure={"search_docs": ToolExposure(...)}` on the middleware or
+  callback options.
+- **Inside the call**, `current_verdict_token()` returns the token Core issued
+  for that exact payload, for `relay_via_executor`.
+- **After the call**, a tool that reaches a source directly (not through the
+  Executor, which runs this check itself) reports what it returned for Core's
+  admission check. It can return it as a `content_and_artifact` list of `Resource`s,
+  through `ToolExposure(returned=...)`, or with `report_returned(...)`. With
+  the middleware, a refused admission replaces the result with
+  `Refused by an exposure barrier`, so nothing refused reaches the model, and a
+  HALT stops the run. The refusal never names labels or rules. With the
+  callback handlers, the verdict is stored on the `ActivityBridge` record, as
+  for every completion.
+
 ## Requirements
 
 - Python 3.11+
-- openbox-sdk-python >= 1.0.0
+- openbox-sdk-python >= 1.5.0
 - langchain-core >= 1.3.3
 - LangChain >= 1.0.0 (required only for `[agent]` extra, which enables `create_agent` middleware)
 

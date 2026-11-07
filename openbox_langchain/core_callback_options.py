@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING
 from openbox_core.context import register_trace as default_register_trace
 from openbox_core.context import unregister_trace as default_unregister_trace
 
+from openbox_langchain.exposure import ToolCallGrant, ToolExposure
+
 if TYPE_CHECKING:
     from openbox_core.contracts.context import ActivityContext
     from openbox_core.contracts.results import EvaluationResult
@@ -83,3 +85,7 @@ class OpenBoxLangChainCoreCallbackOptions:
     unregister_trace: Callable[[int | str], None] = default_unregister_trace
     record_less_ok: bool = True
     llm_trace_handles: dict[str, LLMTraceHandle] = field(default_factory=dict)
+    # Exposure barriers: what each tool's calls touch, by tool name (see
+    # ``openbox_langchain.exposure``), and the governed calls in flight.
+    tool_exposure: dict[str, ToolExposure] = field(default_factory=dict)
+    tool_calls: dict[str, ToolCallGrant] = field(default_factory=dict, repr=False)

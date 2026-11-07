@@ -33,6 +33,7 @@ except ImportError as exc:  # pragma: no cover - surfaced to caller
         "pip install openbox-langchain-sdk-python[agent]"
     ) from exc
 
+from openbox_langchain.exposure import ToolExposure
 from openbox_langchain.middleware_runtime_builder import build_middleware_runtime
 from openbox_langchain.middleware_state import OpenBoxAgentState
 from openbox_langchain.middleware_tool_call_protocol import ToolCallRequestLike
@@ -81,6 +82,9 @@ class OpenBoxLangChainMiddlewareOptions:
     send_llm_end_event: bool = True
     send_tool_start_event: bool = True
     send_tool_end_event: bool = True
+    # Exposure barriers: what each tool's calls touch, by tool name (see
+    # ``openbox_langchain.exposure``). A tool may also carry its own.
+    tool_exposure: dict[str, ToolExposure] = field(default_factory=dict)
     # HITL: when set, the async path gets a real approval wait via ApprovalPoller.
     # The sync path always fails-shut on REQUIRE_APPROVAL regardless (M15) — see
     # middleware_hooks.enforce_start_verdict_sync.

@@ -19,6 +19,15 @@ from openbox_langchain.core_callback_tool_start import (
     build_tool_started_input,
     enforce_tool_start_sync,
 )
+from openbox_langchain.exposure import (
+    bind,
+    declare,
+    declaring,
+    reporting,
+    resolve_exposure,
+    returned_resources,
+    unbind,
+)
 
 __all__ = ["SyncToolLifecycleMixin"]
 
@@ -76,11 +85,20 @@ class SyncToolLifecycleMixin:
                 inputs if inputs is not None else input_str, tool_type=tool_type
             )
             envelope = build_tool_started_envelope(options, activity_id, tool_name, activity_input)
-            result = options.runtime.gate.evaluate(envelope)
+            exposure = resolve_exposure(options.tool_exposure, tool_name)
+            call = declare(exposure, inputs) if exposure is not None else None
+            with declaring(call):
+                result = options.runtime.gate.evaluate(envelope)
+            if call is not None:
+                call.verdict_token = result.verdict_token
+                options.tool_calls[activity_id] = call
             options.bridge.mark_sent(options.workflow_id, activity_id, "tool_start")
             options.bridge.stash_start_result(options.workflow_id, activity_id, result)
 
         enforce_tool_start_sync(options, activity_id, tool_name, result)
+        # The tool body runs in this context next: hand it its call (verdict
+        # token included). Best effort where LangChain copies the context.
+        bind(options.tool_calls.get(activity_id))
 
     def on_tool_end(
         self,
@@ -98,9 +116,16 @@ class SyncToolLifecycleMixin:
         if record is None and not options.record_less_ok:
             return
         tool_name = record.tool_name if record and record.tool_name else "unknown_tool"
-        if not options.send_tool_end_event:
+        call = options.tool_calls.pop(activity_id, None)
+        unbind()
+        exposure = resolve_exposure(options.tool_exposure, tool_name)
+        returned = returned_resources(exposure, call, output)
+        if not options.send_tool_end_event and not returned:
             return
-        send_tool_completed_sync(options, activity_id, tool_name, result=output)
+        # What the tool returned goes to the admission check. As with every
+        # completion (C4) the verdict is stashed on the bridge, not enforced.
+        with reporting(call, returned):
+            send_tool_completed_sync(options, activity_id, tool_name, result=output)
 
     def on_tool_error(
         self,
@@ -118,6 +143,8 @@ class SyncToolLifecycleMixin:
         if record is None and not options.record_less_ok:
             return
         tool_name = record.tool_name if record and record.tool_name else "unknown_tool"
+        options.tool_calls.pop(activity_id, None)
+        unbind()
         if not options.send_tool_end_event:
             return
         send_tool_completed_sync(options, activity_id, tool_name, error=str(error))
