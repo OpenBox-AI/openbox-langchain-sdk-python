@@ -220,3 +220,23 @@ def test_factory_uses_magicmock_free_construction():
     mw = create(api_url=API_URL, api_key=API_KEY, validate=False)
     assert mw._runtime.config.api_url == API_URL
     assert mw._runtime.config.api_key == API_KEY
+
+
+def test_factory_applies_server_fail_closed_from_startup_validation():
+    """PROD-1098: a governed agent's startup validation says fail_closed, and the
+    middleware fails closed from the first action, not only after a verdict."""
+    create = _import_factory()
+    with patch("openbox_langchain.middleware_factory.EvaluationClient") as client_cls:
+        client_cls.return_value.validate_api_key.return_value = True
+        client_cls.return_value.server_on_api_error = "fail_closed"
+        mw = create(api_url=API_URL, api_key=API_KEY)
+    assert mw._options.on_api_error == "fail_closed"
+
+
+def test_factory_keeps_the_default_when_the_server_pushes_nothing():
+    create = _import_factory()
+    with patch("openbox_langchain.middleware_factory.EvaluationClient") as client_cls:
+        client_cls.return_value.validate_api_key.return_value = True
+        client_cls.return_value.server_on_api_error = None
+        mw = create(api_url=API_URL, api_key=API_KEY)
+    assert mw._options.on_api_error != "fail_closed"

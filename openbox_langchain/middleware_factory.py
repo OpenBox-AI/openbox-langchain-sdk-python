@@ -91,6 +91,10 @@ def create_openbox_langchain_middleware(
         )
         try:
             client.validate_api_key()
+            # A governed agent (its organisation has exposure barriers) is told
+            # by the server to fail closed; apply it from the first action.
+            if getattr(client, "server_on_api_error", None) == "fail_closed":
+                kwargs["on_api_error"] = "fail_closed"
         finally:
             client.close()
 
