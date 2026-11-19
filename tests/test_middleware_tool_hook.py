@@ -21,6 +21,16 @@ from tests.fakes_core_callback import (
 WORKFLOW_TYPE = "TestAgent"
 
 
+def _error_message(payload: dict) -> str:
+    """Error text from an ActivityCompleted payload.
+
+    openbox-sdk-python >= 1.4.0 sends ErrorInfo ({"type", "message"}); older
+    releases sent a bare string.
+    """
+    error = payload.get("error") or ""
+    return error.get("message", "") if isinstance(error, dict) else error
+
+
 def make_mw(*, gate: FakeGate | None = None, adapter: FakeAdapter | None = None) -> MagicMock:
     mw = MagicMock()
     mw._workflow_type = WORKFLOW_TYPE
@@ -203,7 +213,7 @@ async def test_handle_wrap_tool_call_tool_body_error_sends_failed_completion():
 
     completed = [e for e in gate.sent if e.payload.get("event_type") == "ActivityCompleted"]
     assert len(completed) == 1
-    assert "tool crashed" in completed[0].payload.get("error", "")
+    assert "tool crashed" in _error_message(completed[0].payload)
 
 
 async def test_handle_wrap_tool_call_skips_tool_start_when_flag_false():
@@ -298,7 +308,7 @@ def test_handle_wrap_tool_call_sync_tool_body_error_sends_failed_completion():
 
     completed = [e for e in gate.sent if e.payload.get("event_type") == "ActivityCompleted"]
     assert len(completed) == 1
-    assert "boom" in completed[0].payload.get("error", "")
+    assert "boom" in _error_message(completed[0].payload)
 
 
 def test_handle_wrap_tool_call_sync_skips_governance_for_excluded_tools():
